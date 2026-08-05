@@ -22,6 +22,18 @@ struct RigidBodyParams {
   double inertia = 1.0;
 };
 
+// Body geometry: the vertices of a convex polygon, expressed in the
+// body's own frame relative to the center of mass. Fixed per body, like
+// RigidBodyParams -- never differentiated with respect to.
+//
+// A world-frame vertex is p_i(q) = c + R(theta) * vertices[i], where
+// c = q.head<2>(). Vertex order is the contact order: contact i is
+// always vertex i, so detection is deterministic without sorting. See
+// docs/derivations/contact_detection.md.
+struct BodyShape {
+  std::vector<Eigen::Vector2d> vertices;
+};
+
 // Stacked state vector x = (q, v), q in the first three components.
 // This ordering is the single source of truth for how state Jacobians
 // are laid out -- Pack/Unpack are the only place it's encoded.
