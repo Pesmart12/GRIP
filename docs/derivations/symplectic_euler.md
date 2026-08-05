@@ -110,7 +110,7 @@ energy growth (spiral-out), regardless of how small `h` is; smaller `h`
 only slows the growth rate, it doesn't remove it.
 
 `tests/validation/test_energy_behavior.cpp` exercises this directly through
-the production `symplectic_euler_step`, using `u = -kq` recomputed from the
+the production `step_body`, using `u = -kq` recomputed from the
 current state each step (no new force law added to `src/`), and uses a
 locally-implemented explicit Euler as a negative control that must show
 growth by contrast. Practical implication carried forward: the `|ωh| < 2`

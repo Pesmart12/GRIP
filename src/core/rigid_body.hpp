@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include <Eigen/Core>
 
 namespace grip {
@@ -33,6 +35,32 @@ inline StateVector Pack(const RigidBodyState& state) {
 
 inline RigidBodyState Unpack(const StateVector& x) {
   return RigidBodyState{x.head<3>(), x.tail<3>()};
+}
+
+// System-level stacking, for N independent bodies: body i occupies
+// [6i, 6i+6) of the vector, each body's own (q, v) block laid out per
+// StateVector's convention above. Size is runtime (N isn't known at
+// compile time), unlike the fixed 6-dim single-body StateVector.
+using SystemStateVector = Eigen::VectorXd;
+
+inline SystemStateVector PackSystem(const std::vector<RigidBodyState>& states) {
+  SystemStateVector x(6 * states.size());
+
+  for (std::size_t i = 0; i < states.size(); ++i) {
+    x.segment<6>(static_cast<Eigen::Index>(6 * i)) = Pack(states[i]);
+  }
+  
+  return x;
+}
+
+inline std::vector<RigidBodyState> UnpackSystem(const SystemStateVector& x, std::size_t num_bodies) {
+  std::vector<RigidBodyState> states(num_bodies);
+
+  for (std::size_t i = 0; i < num_bodies; ++i) {
+    states[i] = Unpack(x.segment<6>(static_cast<Eigen::Index>(6 * i)));
+  }
+
+  return states;
 }
 
 }  // namespace grip

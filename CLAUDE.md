@@ -69,6 +69,22 @@ Settled unless explicitly reopened:
   source of truth for the stacking order. Don't collapse these into one
   representation; each direction (struct-only or vector-only) has a real
   cost — see `docs/derivations/integrator_jacobians.md`.
+- **Multiple bodies are parallel vectors, not a bundled struct.**
+  `std::vector<RigidBodyState>` + `std::vector<RigidBodyParams>`,
+  indexed together — the same state/params split as the single-body
+  case, applied at the collection level. System state is
+  `PackSystem`/`UnpackSystem`'s concatenation (body `i` at
+  `[6i, 6i+6)`), built on the single-body `Pack`/`Unpack` convention
+  above.
+- **The system Jacobian is built alongside every step, not deferred
+  until contact needs it.** It's exactly block-diagonal today, since
+  bodies don't couple yet — each diagonal block is just the per-body
+  Jacobian. Building it now doesn't create rework later: step 4
+  (detection) doesn't touch it, step 5's per-body contact force only
+  enriches a diagonal block through the existing `ForceJacobian` hook,
+  and real body-body coupling (steps 6–7) goes through the IFT gradient
+  path — a different computation, not an extension of this assembly.
+  See `docs/derivations/multi_body_system.md`.
 - **Strictly deterministic.** Same input, same binary, same output, bit for
   bit. No unordered container iteration, no unstable sorts, no
   order-dependent floating-point accumulation, no uninitialized memory.
@@ -77,6 +93,22 @@ Settled unless explicitly reopened:
 
 New dependencies beyond Eigen, GoogleTest, and (later) pybind11 need
 discussion first.
+
+## Code style
+
+Pedro's preferences. Follow them in new code; don't reintroduce the old
+patterns when editing.
+
+- **Function parameters go on one line**, however long the line gets.
+  Never wrap a parameter list one-per-line, in declarations, definitions,
+  or calls.
+- **No function overloading.** Two functions that take different
+  arguments or return different things get different names — reading a
+  call site shouldn't require resolving which overload is meant from the
+  argument types. This is why the integrator has `step_body` /
+  `step_system` (and `step_body_jacobian` / `step_system_jacobian`)
+  rather than one overloaded name per pair. When a function gains a
+  "same thing, but for N of them" variant, name it; don't overload it.
 
 ## Repository layout
 

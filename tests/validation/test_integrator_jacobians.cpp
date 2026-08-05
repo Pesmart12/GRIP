@@ -23,23 +23,17 @@ TEST(IntegratorJacobians, MatchCentralFiniteDifference) {
   const double dt = 0.05;
   const double gravity = kDefaultGravity;
 
-  const StepJacobians analytic =
-      symplectic_euler_step_jacobian(state, params, u, dt, gravity);
+  const StepJacobians analytic = step_body_jacobian(state, params, u, dt, gravity);
 
-  const std::function<StateVector(const StateVector&)> step_from_state =
-      [&](const StateVector& x) {
-        return Pack(symplectic_euler_step(Unpack(x), params, u, dt, gravity));
-      };
-  const StateJacobian fd_dx_dx =
-      testutil::CentralDifferenceJacobian<6, 6>(step_from_state, Pack(state));
+  const std::function<StateVector(const StateVector&)> step_from_state = [&](const StateVector& x) {
+    return Pack(step_body(Unpack(x), params, u, dt, gravity));
+  };
+  const StateJacobian fd_dx_dx = testutil::CentralDifferenceJacobian<6, 6>(step_from_state, Pack(state));
 
-  const std::function<StateVector(const Eigen::Vector3d&)> step_from_control =
-      [&](const Eigen::Vector3d& u_perturbed) {
-        return Pack(
-            symplectic_euler_step(state, params, u_perturbed, dt, gravity));
-      };
-  const ControlJacobian fd_dx_du =
-      testutil::CentralDifferenceJacobian<6, 3>(step_from_control, u);
+  const std::function<StateVector(const Eigen::Vector3d&)> step_from_control = [&](const Eigen::Vector3d& u_perturbed) {
+    return Pack(step_body(state, params, u_perturbed, dt, gravity));
+  };
+  const ControlJacobian fd_dx_du = testutil::CentralDifferenceJacobian<6, 3>(step_from_control, u);
 
   constexpr double kTol = 1e-6;
   for (int i = 0; i < 6; ++i) {
@@ -66,8 +60,7 @@ TEST(IntegratorJacobians, GravityContributesZeroStateCoupling) {
   const Eigen::Vector3d u = Eigen::Vector3d::Zero();
   const double dt = 0.02;
 
-  const StepJacobians jac =
-      symplectic_euler_step_jacobian(state, params, u, dt, kDefaultGravity);
+  const StepJacobians jac = step_body_jacobian(state, params, u, dt, kDefaultGravity);
 
   const Eigen::Matrix3d dv_dq_block = jac.dx_dx.block<3, 3>(3, 0);
   EXPECT_TRUE(dv_dq_block.isZero(0.0));

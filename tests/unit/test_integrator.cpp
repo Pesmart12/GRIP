@@ -12,8 +12,7 @@ TEST(SymplecticEulerStep, GravityFromRestSingleStep) {
   const double dt = 0.01;
   const double g = 9.81;
 
-  const RigidBodyState next =
-      symplectic_euler_step(state, params, Eigen::Vector3d::Zero(), dt, g);
+  const RigidBodyState next = step_body(state, params, Eigen::Vector3d::Zero(), dt, g);
 
   const double expected_vy = -dt * g;
   const double expected_qy = dt * expected_vy;  // = -dt^2 * g
@@ -35,8 +34,7 @@ TEST(SymplecticEulerStep, GravityFromRestMultiStepClosedForm) {
   const int n = 10;
 
   for (int i = 0; i < n; ++i) {
-    state =
-        symplectic_euler_step(state, params, Eigen::Vector3d::Zero(), dt, g);
+    state = step_body(state, params, Eigen::Vector3d::Zero(), dt, g);
   }
 
   // Recursion v_i = v_{i-1} + dt*a, q_i = q_{i-1} + dt*v_i, from rest,
@@ -60,8 +58,7 @@ TEST(SymplecticEulerStep, ConstantWrenchDecouplesAcrossAxes) {
   const double gravity = 0.0;              // isolate the wrench
   const Eigen::Vector3d u(4.0, 0.0, 1.0);  // fx and tau only, no fy
 
-  const RigidBodyState next =
-      symplectic_euler_step(state, params, u, dt, gravity);
+  const RigidBodyState next = step_body(state, params, u, dt, gravity);
 
   const double expected_vx = dt * (u.x() / params.mass);
   const double expected_omega = dt * (u.z() / params.inertia);

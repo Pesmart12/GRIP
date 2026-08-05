@@ -11,7 +11,7 @@ namespace grip {
 namespace {
 
 // Harmonic oscillator energy, exercised through the production
-// symplectic_euler_step by recomputing u = -k*x each step from the
+// step_body by recomputing u = -k*x each step from the
 // current state -- no new force law added to src/. Gravity alone has
 // no restoring force, so it has nothing periodic to bound-oscillate;
 // this is the minimal system where the bounded-vs-drifting distinction
@@ -44,7 +44,7 @@ TEST(EnergyBehavior, SymplecticEulerBoundsOscillatorEnergy) {
 
   for (int i = 0; i < n; ++i) {
     const Eigen::Vector3d u(-k * state.q.x(), 0.0, 0.0);
-    state = symplectic_euler_step(state, params, u, dt, /*gravity=*/0.0);
+    state = step_body(state, params, u, dt, /*gravity=*/0.0);
 
     const double dev = std::abs(HarmonicEnergy(state, mass, k) - e0);
     if (i < window) early_max_dev = std::max(early_max_dev, dev);
@@ -70,7 +70,7 @@ TEST(EnergyBehavior, ExplicitEulerDriftsByContrast) {
   // position from the OLD velocity instead of the new one. That single
   // ordering change turns bounded oscillation into unbounded
   // exponential growth -- exactly what this suite must catch if the
-  // update order in symplectic_euler_step ever regresses to this.
+  // update order in step_body ever regresses to this.
   const double mass = 1.0;
   const double k = 1.0;
   const double omega = std::sqrt(k / mass);
