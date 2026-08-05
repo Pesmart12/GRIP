@@ -60,6 +60,15 @@ Settled unless explicitly reopened:
 - **GoogleTest** for tests.
 - **double** precision throughout. Never `float`.
 - **2D planar.** Configuration is `(x, y, θ)`; body mass matrices are 3×3.
+- **State has two representations, deliberately.** `RigidBodyState{q, v}`
+  (named 3-vectors) is the physics-facing form — forward simulation and
+  force laws read it. A packed 6D `StateVector` (`q` then `v`) is the
+  linear-algebra-facing form — Jacobians, FD checks, and anything that
+  treats state as a point in `Rⁿ` use it. `Pack`/`Unpack` in
+  `core/rigid_body.hpp` are the only conversion boundary and the single
+  source of truth for the stacking order. Don't collapse these into one
+  representation; each direction (struct-only or vector-only) has a real
+  cost — see `docs/derivations/integrator_jacobians.md`.
 - **Strictly deterministic.** Same input, same binary, same output, bit for
   bit. No unordered container iteration, no unstable sorts, no
   order-dependent floating-point accumulation, no uninitialized memory.
