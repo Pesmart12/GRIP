@@ -2,6 +2,7 @@
 #include <functional>
 #include <vector>
 
+#include <Eigen/LU>
 #include <gtest/gtest.h>
 
 #include "core/rigid_body.hpp"
@@ -52,27 +53,27 @@ TEST(SystemJacobians, MatchCentralFiniteDifference) {
   const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> step_from_state = [&](const Eigen::VectorXd& x) {
     return PackSystem(step_system(UnpackSystem(x, num_bodies), params, u, dt, gravity));
   };
-  const Eigen::MatrixXd fd_dX_dX = testutil::CentralDifferenceJacobianXd(step_from_state, PackSystem(states));
+  const Eigen::MatrixXd fd_dZ_dZ = testutil::CentralDifferenceJacobianXd(step_from_state, PackSystem(states));
 
   const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> step_from_control = [&](const Eigen::VectorXd& flat_u) {
     return PackSystem(step_system(states, params, UnflattenControls(flat_u, num_bodies), dt, gravity));
   };
-  const Eigen::MatrixXd fd_dX_dU = testutil::CentralDifferenceJacobianXd(step_from_control, FlattenControls(u));
+  const Eigen::MatrixXd fd_dZ_dU = testutil::CentralDifferenceJacobianXd(step_from_control, FlattenControls(u));
 
   constexpr double kTol = 1e-6;
-  ASSERT_EQ(analytic.dX_dX.rows(), fd_dX_dX.rows());
-  ASSERT_EQ(analytic.dX_dX.cols(), fd_dX_dX.cols());
-  ASSERT_EQ(analytic.dX_dU.rows(), fd_dX_dU.rows());
-  ASSERT_EQ(analytic.dX_dU.cols(), fd_dX_dU.cols());
+  ASSERT_EQ(analytic.dZ_dZ.rows(), fd_dZ_dZ.rows());
+  ASSERT_EQ(analytic.dZ_dZ.cols(), fd_dZ_dZ.cols());
+  ASSERT_EQ(analytic.dZ_dU.rows(), fd_dZ_dU.rows());
+  ASSERT_EQ(analytic.dZ_dU.cols(), fd_dZ_dU.cols());
 
-  for (Eigen::Index i = 0; i < analytic.dX_dX.rows(); ++i) {
-    for (Eigen::Index j = 0; j < analytic.dX_dX.cols(); ++j) {
-      EXPECT_NEAR(analytic.dX_dX(i, j), fd_dX_dX(i, j), kTol)
-          << "dX_dX mismatch at (" << i << ", " << j << ")";
+  for (Eigen::Index i = 0; i < analytic.dZ_dZ.rows(); ++i) {
+    for (Eigen::Index j = 0; j < analytic.dZ_dZ.cols(); ++j) {
+      EXPECT_NEAR(analytic.dZ_dZ(i, j), fd_dZ_dZ(i, j), kTol)
+          << "dZ_dZ mismatch at (" << i << ", " << j << ")";
     }
-    for (Eigen::Index j = 0; j < analytic.dX_dU.cols(); ++j) {
-      EXPECT_NEAR(analytic.dX_dU(i, j), fd_dX_dU(i, j), kTol)
-          << "dX_dU mismatch at (" << i << ", " << j << ")";
+    for (Eigen::Index j = 0; j < analytic.dZ_dU.cols(); ++j) {
+      EXPECT_NEAR(analytic.dZ_dU(i, j), fd_dZ_dU(i, j), kTol)
+          << "dZ_dU mismatch at (" << i << ", " << j << ")";
     }
   }
 }
@@ -89,15 +90,38 @@ TEST(SystemJacobians, OffDiagonalBlocksAreExactlyZero) {
 
   const SystemStepJacobians jac = step_system_jacobian(states, params, u, dt, kDefaultGravity);
 
-  const Eigen::MatrixXd off_diag_01 = jac.dX_dX.block<6, 6>(0, 6);
-  const Eigen::MatrixXd off_diag_10 = jac.dX_dX.block<6, 6>(6, 0);
-  const Eigen::MatrixXd off_diag_control_01 = jac.dX_dU.block<6, 3>(0, 3);
-  const Eigen::MatrixXd off_diag_control_10 = jac.dX_dU.block<6, 3>(6, 0);
+  const Eigen::MatrixXd off_diag_01 = jac.dZ_dZ.block<6, 6>(0, 6);
+  const Eigen::MatrixXd off_diag_10 = jac.dZ_dZ.block<6, 6>(6, 0);
+  const Eigen::MatrixXd off_diag_control_01 = jac.dZ_dU.block<6, 3>(0, 3);
+  const Eigen::MatrixXd off_diag_control_10 = jac.dZ_dU.block<6, 3>(6, 0);
 
   EXPECT_TRUE(off_diag_01.isZero(0.0));
   EXPECT_TRUE(off_diag_10.isZero(0.0));
   EXPECT_TRUE(off_diag_control_01.isZero(0.0));
   EXPECT_TRUE(off_diag_control_10.isZero(0.0));
+}
+
+TEST(SystemJacobians, ConservativeStepPreservesPhaseSpaceVolume) {
+  // Block-diagonal, so the system determinant is the product of the
+  // per-body determinants -- each exactly 1 for a conservative force,
+  // hence 1 overall regardless of body count. The system-level
+  // counterpart of the same structural check in
+  // test_integrator_jacobians.cpp.
+  std::vector<RigidBodyState> states(3);
+  states[0].q = Eigen::Vector3d(0.4, -1.2, 0.9);
+  states[1].q = Eigen::Vector3d(-0.3, 0.7, -1.5);
+  states[2].v = Eigen::Vector3d(1.1, -0.6, 0.2);
+
+  std::vector<RigidBodyParams> params(3);
+  params[0] = RigidBodyParams{1.0, 1.0};
+  params[1] = RigidBodyParams{3.7, 0.2};
+  params[2] = RigidBodyParams{0.4, 2.9};
+
+  const std::vector<Eigen::Vector3d> u(3, Eigen::Vector3d(0.5, -0.2, 0.8));
+
+  const SystemStepJacobians jac = step_system_jacobian(states, params, u, 0.03, kDefaultGravity);
+
+  EXPECT_NEAR(jac.dZ_dZ.determinant(), 1.0, 1e-14);
 }
 
 }  // namespace

@@ -1,0 +1,137 @@
+# Notation
+
+Canonical symbols for the whole project. Every other file in
+`docs/derivations/` uses these and nothing else. **No symbol means two
+things.** If a new quantity needs a letter, add it here first.
+
+## State and dynamics
+
+| symbol | meaning | shape | code |
+|---|---|---|---|
+| `q` | configuration `(x, y, θ)` | 3-vector | `RigidBodyState::q` |
+| `v` | generalized velocity `(vₓ, v_y, ω)` | 3-vector | `RigidBodyState::v` |
+| `z` | stacked state `(q, v)` | 6-vector | `StateVector` |
+| `Z` | stacked system state, body `i` at `[6i, 6i+6)` | 6B-vector | `SystemStateVector` |
+| `u` | control wrench `(fₓ, f_y, τ)` at the COM | 3-vector | `u` |
+| `f` | total generalized force | 3-vector | — |
+| `M` | mass matrix `diag(m, m, I)` | 3×3 | — |
+| `m` | mass | scalar | `RigidBodyParams::mass` |
+| `I` | moment of inertia about the COM | scalar | `RigidBodyParams::inertia` |
+| `g` | gravitational acceleration | scalar | `kDefaultGravity` |
+| `dt` | timestep | scalar | `dt` |
+| `B` | number of bodies | scalar | — |
+| `Id` | identity matrix | square | `Matrix3d::Identity()` |
+
+`z` rather than `x` for the stacked state: `q = (x, y, θ)` already uses
+`x` for a scalar coordinate, and `∂x/∂x` meaning "6×6 state Jacobian"
+next to `x` meaning "horizontal position" is a genuine misreading.
+`z = (q, v)` is the standard control-theory spelling and removes the
+clash. Jacobians therefore read `∂z_{t+1}/∂z_t`, in code `dz_dz`.
+
+`Id` rather than `I` for the identity, because `I` is the moment of
+inertia in `M = diag(m, m, I)`, which has no comfortable alternative
+spelling.
+
+`B` rather than `N` for the body count, so `n` unambiguously means the
+contact normal.
+
+## Geometry
+
+| symbol | meaning | shape | code |
+|---|---|---|---|
+| `c` | body center of mass, world | 2-vector | `q.head<2>()` |
+| `θ` | body orientation | scalar | `q.z()` |
+| `R(θ)` | body→world rotation | 2×2 | `Rotation2Dd` |
+| `rᵢ` | vertex `i` in the body frame | 2-vector | `BodyShape::vertices[i]` |
+| `pᵢ` | vertex `i` in the world, `= c + R(θ)rᵢ` | 2-vector | `Contact::point` |
+| `n` | half-plane normal, unit, into free space | 2-vector | `HalfPlane::normal` |
+| `o` | half-plane offset from the origin along `n` | scalar | `HalfPlane::offset` |
+| `a^⊥` | perp operator, `(−a_y, aₓ)` | 2-vector | `Perp(a)` |
+
+The perp operator replaces what an earlier draft called `J` (the 90°
+rotation matrix `[[0,−1],[1,0]]`). That collided head-on with `J` for
+the contact Jacobian — the two appeared in the *same* expression. `a^⊥`
+needs no symbol of its own and says what it does, leaving `J` to mean
+Jacobian everywhere.
+
+`o` is a **scalar**, not a point. An intermediate draft defined the plane
+by a point `p₀` on its boundary, which collided with vertex 0 (vertices
+being `pᵢ`) in the one expression where it mattered most. The scalar
+offset avoids that, and is better anyway: a half-plane has exactly one
+positional degree of freedom, so storing a point would be redundant —
+two different points describe the same plane. This is the standard Hesse
+normal form.
+
+## Contact
+
+| symbol | meaning | shape | code |
+|---|---|---|---|
+| `dᵢ` | signed distance (gap) at vertex `i` | scalar | `Contact::signed_distance` |
+| `ḋᵢ` | closing rate, `= Jᵢ·v` | scalar | — |
+| `Jᵢ` | contact Jacobian `∂dᵢ/∂q` | 1×3 row | — |
+| `λᵢ` | normal force magnitude at contact `i` | scalar | — |
+| `k`, `b` | contact stiffness, damping | scalars | — |
+
+`d` rather than `φ` for the gap. `φ` is the contact-dynamics convention
+(Stewart–Trinkle, Anitescu, Dojo), but this project uses `θ` for body
+orientation, and `θ`/`φ` is *the* canonical angle pair — pairing them
+while making one emphatically not an angle is the worst available
+choice. `d` reads as "distance" with no gloss. It is free because the
+half-plane's offset is called `o`:
+
+```
+free space = { p : n·p ≥ o }
+dᵢ = n·pᵢ − o
+```
+
+Both formulas assume `‖n‖ = 1`. With a scaled normal `d` is still
+correctly signed and still zero on the boundary, but it is no longer a
+distance — every penetration depth, and therefore every contact force,
+is silently scaled with it.
+
+`λ` for the normal force magnitude, not `N`: `N` differs from `n`
+(normal direction) only by case, and the two always appear together as
+`λn`. `λ` also matches the multiplier that the NCP solver will produce
+in step 6, so the same symbol carries across formulations when step 8
+compares them.
+
+Nothing is called `W`. "Wrench" is a useful word for a
+force-plus-torque 3-vector, but `W` is conventionally *work*, and the
+duality argument for `Jᵀ` is itself a virtual-work argument. Contact
+contributes `f_c` to the same `f` the integrator already sums.
+
+## Dots and subscripts
+
+A dot is a **time** derivative: `ḋ = dd/dt`. Distinguish it from the
+configuration derivative `∂d/∂q`; they're linked by the chain rule,
+`ḋ = (∂d/∂q)·q̇ = J·v`, since `q̇ = v`.
+
+Subscript `i` indexes contacts (equivalently vertices — contact `i` is
+always vertex `i`). Subscript `t` indexes timesteps. A bare symbol
+where the indexed one exists means the sum or stack over the index:
+`f_c = Σᵢ f_c,i`.
+
+## Reserved
+
+Letters deliberately left unspent, because a known upcoming quantity has
+a strong claim on them:
+
+| symbol | reserved for |
+|---|---|
+| `s` | slip (tangential) velocity, step 6 friction |
+| `μ` | friction coefficient, step 6 |
+| `t` | time (never a tangential direction — use `n^⊥`) |
+
+`s` is the reason the stacked state is `z` and not `s`, despite `s` being
+the more mnemonic choice for "state": friction's slip velocity has the
+better claim, and `t` and `v` are already taken by time and velocity, so
+slip has nowhere else obvious to go. The tangential direction needs no
+symbol at all — in 2D it is just `n^⊥`.
+
+## Code correspondence
+
+Math notation is for `docs/derivations/`. Code uses descriptive
+identifiers — `signed_distance`, not `d`; `normal_force_magnitude`, not
+`lambda`. The exceptions are the Jacobian member names (`dz_dz`,
+`dz_du`, `dZ_dZ`, `dZ_dU`), where matching the math directly is clearer
+than any prose spelling.

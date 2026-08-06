@@ -1,11 +1,13 @@
 # Analytic Jacobians of the symplectic Euler step
 
+Symbols follow `docs/derivations/notation.md`.
+
 ## What's being differentiated
 
-State `x = (q, v)` is stacked as a 6-vector, `q` in the first three
+State `z = (q, v)` is stacked as a 6-vector, `q` in the first three
 components (`RigidBodyState::Pack`/`Unpack` in `core/rigid_body.hpp` are
 the single place this ordering is encoded — every Jacobian below inherits
-it). We want `∂x_{t+1}/∂x_t` (6×6) and `∂x_{t+1}/∂u` (6×3) for one
+it). We want `∂z_{t+1}/∂z_t` (6×6) and `∂z_{t+1}/∂u` (6×3) for one
 `step_body`.
 
 This is why the packed `StateVector` exists alongside `RigidBodyState`
@@ -24,18 +26,18 @@ of code.
 Recall the step:
 
 ```
-v_{t+1} = v_t + h · M⁻¹ · f(q_t, v_t, u)
-q_{t+1} = q_t + h · v_{t+1}
+v_{t+1} = v_t + dt · M⁻¹ · f(q_t, v_t, u)
+q_{t+1} = q_t + dt · v_{t+1}
 ```
 
 Differentiating straight through, for a general force law `f(q, v, u)`:
 
 ```
-∂v_{t+1}/∂q_t = h·M⁻¹·∂f/∂q          ∂v_{t+1}/∂v_t = I + h·M⁻¹·∂f/∂v          ∂v_{t+1}/∂u = h·M⁻¹·∂f/∂u
-∂q_{t+1}/∂q_t = I + h·∂v_{t+1}/∂q_t   ∂q_{t+1}/∂v_t = h·∂v_{t+1}/∂v_t          ∂q_{t+1}/∂u = h·∂v_{t+1}/∂u
+∂v_{t+1}/∂q_t = dt·M⁻¹·∂f/∂q            ∂v_{t+1}/∂v_t = Id + dt·M⁻¹·∂f/∂v    ∂v_{t+1}/∂u = dt·M⁻¹·∂f/∂u
+∂q_{t+1}/∂q_t = Id + dt·∂v_{t+1}/∂q_t   ∂q_{t+1}/∂v_t = dt·∂v_{t+1}/∂v_t     ∂q_{t+1}/∂u = dt·∂v_{t+1}/∂u
 ```
 
-`∂f/∂u = I` always, independent of which force law is active, because
+`∂f/∂u = Id` always, independent of which force law is active, because
 `u` enters every force law additively (`f = f_physics(q,v) + u`) — a
 consequence of the control-input design from step 1, not something each
 force law needs to supply. `∂f/∂q` and `∂f/∂v` do depend on the force law,
@@ -46,8 +48,8 @@ For gravity, `∂f/∂q = ∂f/∂v = 0` (it's a constant wrench), which collaps
 the above to:
 
 ```
-∂v_{t+1}/∂q_t = 0    ∂v_{t+1}/∂v_t = I    ∂v_{t+1}/∂u = h·M⁻¹
-∂q_{t+1}/∂q_t = I    ∂q_{t+1}/∂v_t = h·I  ∂q_{t+1}/∂u = h²·M⁻¹
+∂v_{t+1}/∂q_t = 0     ∂v_{t+1}/∂v_t = Id     ∂v_{t+1}/∂u = dt·M⁻¹
+∂q_{t+1}/∂q_t = Id    ∂q_{t+1}/∂v_t = dt·Id  ∂q_{t+1}/∂u = dt²·M⁻¹
 ```
 
 Notice the whole system is currently linear (gravity plus additive
@@ -59,10 +61,10 @@ in `step_body_jacobian` without changing its structure.
 
 ## Why `ForceJacobian` doesn't carry a `∂f/∂u` field
 
-`u`'s Jacobian is a structural fact of the integrator (`h·M⁻¹`, always),
+`u`'s Jacobian is a structural fact of the integrator (`dt·M⁻¹`, always),
 not a property of the force law, so it's computed directly in
 `step_body_jacobian` rather than asked of `gravity_force_jacobian`.
-Asking every force law to hand back `∂f/∂u = I` would just be restating
+Asking every force law to hand back `∂f/∂u = Id` would just be restating
 the same constant everywhere for no benefit.
 
 ## Finite-difference validation methodology
@@ -85,3 +87,36 @@ The test also asserts `∂v_{t+1}/∂q_t` is *exactly* zero for gravity, not
 just numerically close — that block should come out as an identical zero
 by construction, and an exact check catches a bug (e.g. an accidental
 `∂f/∂q` contribution) that a loose FD tolerance might paper over.
+
+## Structural check: the determinant is exactly 1
+
+For any conservative force law (`∂f/∂v = 0`, writing `A = ∂f/∂q`), the
+step Jacobian is
+
+```
+dz_dz = [ Id + dt²·M⁻¹A   dt·Id ]
+        [ dt·M⁻¹A         Id    ]
+```
+
+and the block formula `det = det(S)·det(P − Q·S⁻¹·R)` with `S = Id`
+gives
+
+```
+det(P − Q·S⁻¹·R) = det(Id + dt²·M⁻¹A − dt·Id·dt·M⁻¹A) = det(Id) = 1
+```
+
+The two `dt²·M⁻¹A` terms cancel exactly. So `det(dz_dz) = 1` — the
+discrete statement of phase-space volume preservation, which is the
+defining property of a symplectic map and the same fact underlying the
+bounded energy behavior in `symplectic_euler.md`.
+
+This is a different kind of test from the finite-difference comparison.
+FD asks whether the analytic Jacobian matches the implementation; the
+determinant asks whether the Jacobian has the structure the integrator's
+design promises. It holds for *any* conservative force, so it keeps its
+teeth as force laws are added — and it should correctly **stop** holding
+once velocity-dependent damping arrives in step 5, since dissipation
+contracts phase-space volume rather than preserving it. The
+system-level version follows immediately: `dZ_dZ` is block-diagonal, so
+its determinant is the product of per-body determinants, hence 1 for any
+body count.

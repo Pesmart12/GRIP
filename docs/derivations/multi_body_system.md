@@ -1,5 +1,7 @@
 # Multiple bodies (still unconstrained)
 
+Symbols follow `docs/derivations/notation.md`.
+
 ## Why this step has no new physics
 
 Step 3 in the build order adds multiple rigid bodies, but they don't
@@ -15,7 +17,7 @@ together — the same split as single-body state/params (step 2), applied
 at the collection level: a rollout only ever evolves the states vector,
 params is invariant data threaded through unchanged.
 
-System state `X` is the concatenation `PackSystem`/`UnpackSystem`
+System state `Z` is the concatenation `PackSystem`/`UnpackSystem`
 (`core/rigid_body.hpp`) produce: body `i` occupies `[6i, 6i+6)`, each
 body's own block laid out per the single-body `Pack`/`Unpack` convention
 (`q` then `v`). This is a direct extension of the single-body stacking
@@ -24,10 +26,10 @@ one.
 
 ## The system Jacobian is exactly block-diagonal
 
-Since no force couples body `i` to body `j`, `∂X_{t+1}/∂X_t` and
-`∂X_{t+1}/∂U` are block-diagonal by construction: block `i` is exactly
+Since no force couples body `i` to body `j`, `∂Z_{t+1}/∂Z_t` and
+`∂Z_{t+1}/∂U` are block-diagonal by construction: block `i` is exactly
 the per-body `StepJacobians` from step 2, placed at `(6i, 6i)` in
-`dX_dX` and `(6i, 3i)` in `dX_dU`. Off-diagonal blocks are exactly zero —
+`dZ_dZ` and `(6i, 3i)` in `dZ_dU`. Off-diagonal blocks are exactly zero —
 not approximately, exactly, since nothing in the update for body `i`
 reads body `j`'s state or control at all. `test_integrator_system_jacobians.cpp`
 checks this directly, same pattern as the exact-zero gravity check in

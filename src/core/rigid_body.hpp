@@ -34,9 +34,10 @@ struct BodyShape {
   std::vector<Eigen::Vector2d> vertices;
 };
 
-// Stacked state vector x = (q, v), q in the first three components.
+// Stacked state vector z = (q, v), q in the first three components.
 // This ordering is the single source of truth for how state Jacobians
 // are laid out -- Pack/Unpack are the only place it's encoded.
+// See docs/derivations/notation.md.
 using StateVector = Eigen::Matrix<double, 6, 1>;
 
 inline StateVector Pack(const RigidBodyState& state) {

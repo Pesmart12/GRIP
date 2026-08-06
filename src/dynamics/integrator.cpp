@@ -34,13 +34,13 @@ StepJacobians step_body_jacobian(const RigidBodyState& state, const RigidBodyPar
   const Eigen::Matrix3d dq_du = dt * dv_du;
 
   StepJacobians jac;
-  jac.dx_dx.block<3, 3>(0, 0) = dq_dq;
-  jac.dx_dx.block<3, 3>(0, 3) = dq_dv;
-  jac.dx_dx.block<3, 3>(3, 0) = dv_dq;
-  jac.dx_dx.block<3, 3>(3, 3) = dv_dv;
+  jac.dz_dz.block<3, 3>(0, 0) = dq_dq;
+  jac.dz_dz.block<3, 3>(0, 3) = dq_dv;
+  jac.dz_dz.block<3, 3>(3, 0) = dv_dq;
+  jac.dz_dz.block<3, 3>(3, 3) = dv_dv;
 
-  jac.dx_du.block<3, 3>(0, 0) = dq_du;
-  jac.dx_du.block<3, 3>(3, 0) = dv_du;
+  jac.dz_du.block<3, 3>(0, 0) = dq_du;
+  jac.dz_du.block<3, 3>(3, 0) = dv_du;
 
   return jac;
 }
@@ -62,14 +62,14 @@ SystemStepJacobians step_system_jacobian(const std::vector<RigidBodyState>& stat
 
   const auto n = static_cast<Eigen::Index>(states.size());
   SystemStepJacobians jac;
-  jac.dX_dX = SystemStateJacobian::Zero(6 * n, 6 * n);
-  jac.dX_dU = SystemControlJacobian::Zero(6 * n, 3 * n);
+  jac.dZ_dZ = SystemStateJacobian::Zero(6 * n, 6 * n);
+  jac.dZ_dU = SystemControlJacobian::Zero(6 * n, 3 * n);
 
   for (Eigen::Index i = 0; i < n; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
     const StepJacobians body_jac = step_body_jacobian(states[idx], params[idx], u[idx], dt, gravity);
-    jac.dX_dX.block<6, 6>(6 * i, 6 * i) = body_jac.dx_dx;
-    jac.dX_dU.block<6, 3>(6 * i, 3 * i) = body_jac.dx_du;
+    jac.dZ_dZ.block<6, 6>(6 * i, 6 * i) = body_jac.dz_dz;
+    jac.dZ_dU.block<6, 3>(6 * i, 3 * i) = body_jac.dz_du;
   }
   return jac;
 }

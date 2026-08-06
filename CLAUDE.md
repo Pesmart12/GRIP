@@ -140,6 +140,21 @@ grip/
   tolerance. That boundary is the interesting part, not a bug.
 - **Never weaken a tolerance to make a test pass.** Investigate instead.
 
+## Notation
+
+`docs/derivations/notation.md` is the canonical symbol table for the
+whole project. **No symbol means two things.** Before introducing a new
+quantity in a derivation, add it there and check it against what's
+already taken — several collisions (`J` as both a rotation and a
+Jacobian, `x` as both a coordinate and the stacked state, `I` as both
+inertia and identity) had to be untangled after the fact, which is
+exactly what that file exists to prevent.
+
+Math notation belongs in `docs/derivations/`. Code uses descriptive
+identifiers — `signed_distance`, not `d`. The Jacobian member names
+(`dz_dz`, `dZ_dZ`, …) are the deliberate exception, where matching the
+math is clearer than prose.
+
 ## Derivations
 
 Non-trivial math — integrator update, mass matrix construction, contact

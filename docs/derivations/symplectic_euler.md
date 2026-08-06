@@ -1,5 +1,7 @@
 # Symplectic Euler integrator — single 2D rigid body
 
+Symbols follow `docs/derivations/notation.md`.
+
 ## State and convention
 
 Configuration `q = (x, y, θ)`, generalized velocity `v = (vx, vy, ω)`. Both
@@ -33,8 +35,8 @@ update — same mathematical slot, different semantic bucket, not routed
 through `u`.
 
 Because `M` is constant and the force law here is additive in `u`, the
-control Jacobians are closed-form: `∂v_{t+1}/∂u = h M⁻¹`,
-`∂q_{t+1}/∂u = h² M⁻¹`. Useful as a direct FD-check target in step 2.
+control Jacobians are closed-form: `∂v_{t+1}/∂u = dt M⁻¹`,
+`∂q_{t+1}/∂u = dt² M⁻¹`. Useful as a direct FD-check target in step 2.
 
 ## Force law interface
 
@@ -54,23 +56,23 @@ because those blocks should come out identically zero.
 ## Update rule
 
 ```
-v_{t+1} = v_t + h · M⁻¹ · f(q_t, v_t, u_t)
-q_{t+1} = q_t + h · v_{t+1}
+v_{t+1} = v_t + dt · M⁻¹ · f(q_t, v_t, u_t)
+q_{t+1} = q_t + dt · v_{t+1}
 ```
 
 `f` is evaluated at the *old* state `(q_t, v_t)` — explicit in the force.
 The position update then uses the *new* `v_{t+1}` — implicit in position.
 That mixture (explicit force, implicit position) is what "semi-implicit"
 means here, and it's the ordering choice — not the force law — that makes
-the scheme symplectic. Swapping to `q_{t+1} = q_t + h·v_t` recovers plain
+the scheme symplectic. Swapping to `q_{t+1} = q_t + dt·v_t` recovers plain
 explicit Euler, which has the same local (per-step) truncation order but
 categorically different global behavior (see below).
 
 Note that under constant gravity alone, `v_{t+1}` is exactly the continuous
 solution — no discretization error, since acceleration is constant. `q_{t+1}`
 is not exact: the closed-form recursion from rest is
-`v_n = n·h·a`, `q_n = h²·a·n(n+1)/2`, which differs from the continuous
-`q(t) = q_0 + v_0 t + ½at²` by a term `~ ½ a h t`, an `O(h)` offset that
+`v_n = n·dt·a`, `q_n = dt²·a·n(n+1)/2`, which differs from the continuous
+`q(t) = q_0 + v_0 t + ½at²` by a term `~ ½·a·dt·t`, an `O(dt)` offset that
 grows linearly with time but shrinks with step size — ordinary first-order
 discretization error, not an oscillation or drift phenomenon, because
 constant gravity has no potential well and nothing periodic to compare
@@ -84,12 +86,12 @@ exercise it. Consider the harmonic oscillator, `f(q) = -kq` (1D, mass `m`,
 `ω = √(k/m)`). Symplectic Euler's step is the linear map
 
 ```
-x_{n+1} = (1 - ω²h²) x_n + h v_n
-v_{n+1} = -ω²h x_n + v_n
+x_{n+1} = (1 - ω²dt²) x_n + dt v_n
+v_{n+1} = -ω²dt x_n + v_n
 ```
 
 with `det = 1` exactly (a shear composition, not an approximation), and
-trace `2 - ω²h²`. For `|ωh| < 2` the eigenvalues are a complex-conjugate
+trace `2 - ω²dt²`. For `|ω·dt| < 2` the eigenvalues are a complex-conjugate
 pair with `|λ| = √det = 1` exactly. The map is an exact rotation in a
 skewed coordinate system: the discrete trajectory sits on a fixed
 invariant ellipse in phase space forever. Energy computed in the ordinary
@@ -100,20 +102,20 @@ the rollout runs.
 Plain explicit Euler on the same system is instead
 
 ```
-x_{n+1} = x_n + h v_n
-v_{n+1} = -ω²h x_n + v_n
+x_{n+1} = x_n + dt v_n
+v_{n+1} = -ω²dt x_n + v_n
 ```
 
-with `det = 1 + ω²h² > 1`. Eigenvalue magnitude is `√(1+ω²h²) > 1` exactly,
+with `det = 1 + ω²dt² > 1`. Eigenvalue magnitude is `√(1+ω²dt²) > 1` exactly,
 so every step scales the phase-space vector up — guaranteed exponential
-energy growth (spiral-out), regardless of how small `h` is; smaller `h`
-only slows the growth rate, it doesn't remove it.
+energy growth (spiral-out), regardless of how small `dt` is; a smaller
+`dt` only slows the growth rate, it doesn't remove it.
 
 `tests/validation/test_energy_behavior.cpp` exercises this directly through
 the production `step_body`, using `u = -kq` recomputed from the
 current state each step (no new force law added to `src/`), and uses a
 locally-implemented explicit Euler as a negative control that must show
-growth by contrast. Practical implication carried forward: the `|ωh| < 2`
+growth by contrast. Practical implication carried forward: the `|ω·dt| < 2`
 stability bound will matter again once step 5 introduces a stiff contact
 spring — a large step size paired with a stiff `k` can push the discrete
 map outside this bound and the bounded-oscillation guarantee disappears.
