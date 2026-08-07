@@ -4,6 +4,7 @@ add_executable(grip_unit_tests
   unit/test_contact_detection.cpp
   unit/test_integrator.cpp
   unit/test_integrator_system.cpp
+  unit/test_mass.cpp
 )
 target_link_libraries(grip_unit_tests PRIVATE grip_core GTest::gtest_main)
 gtest_discover_tests(grip_unit_tests)

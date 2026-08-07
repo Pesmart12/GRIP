@@ -14,6 +14,7 @@ inline constexpr double kDefaultGravity = 9.81;
 // Depends only on mass -- no torque, since it acts through the COM.
 Eigen::Vector3d gravity_force(const RigidBodyParams& params, double gravity = kDefaultGravity);
 
+
 // df/dq and df/dv for a force law f(q, v, u). Force laws that depend on
 // state (a penalty spring's df/dq, a damper's df/dv) plug into the
 // integrator's chain rule through this shape; df/du is not part of it

@@ -14,6 +14,7 @@ struct RigidBodyState {
   Eigen::Vector3d v = Eigen::Vector3d::Zero();
 };
 
+
 // Fixed body parameters. Kept separate from RigidBodyState: dynamics
 // Jacobians are taken with respect to (q, v) and control input, never
 // with respect to mass/inertia.
@@ -21,6 +22,7 @@ struct RigidBodyParams {
   double mass = 1.0;
   double inertia = 1.0;
 };
+
 
 // Body geometry: the vertices of a convex polygon, expressed in the
 // body's own frame relative to the center of mass. Fixed per body, like
@@ -34,17 +36,20 @@ struct BodyShape {
   std::vector<Eigen::Vector2d> vertices;
 };
 
+
 // Stacked state vector z = (q, v), q in the first three components.
 // This ordering is the single source of truth for how state Jacobians
 // are laid out -- Pack/Unpack are the only place it's encoded.
 // See docs/derivations/notation.md.
 using StateVector = Eigen::Matrix<double, 6, 1>;
 
+
 inline StateVector Pack(const RigidBodyState& state) {
   StateVector x;
   x << state.q, state.v;
   return x;
 }
+
 
 inline RigidBodyState Unpack(const StateVector& x) {
   return RigidBodyState{x.head<3>(), x.tail<3>()};
@@ -56,6 +61,7 @@ inline RigidBodyState Unpack(const StateVector& x) {
 // compile time), unlike the fixed 6-dim single-body StateVector.
 using SystemStateVector = Eigen::VectorXd;
 
+
 inline SystemStateVector PackSystem(const std::vector<RigidBodyState>& states) {
   SystemStateVector x(6 * states.size());
 
@@ -65,6 +71,7 @@ inline SystemStateVector PackSystem(const std::vector<RigidBodyState>& states) {
   
   return x;
 }
+
 
 inline std::vector<RigidBodyState> UnpackSystem(const SystemStateVector& x, std::size_t num_bodies) {
   std::vector<RigidBodyState> states(num_bodies);

@@ -3,11 +3,13 @@
 #include <cassert>
 #include <cstddef>
 
+#include "dynamics/mass.hpp"
+
 namespace grip {
 
 RigidBodyState step_body(const RigidBodyState& state, const RigidBodyParams& params, const Eigen::Vector3d& u, double dt, double gravity) {
   const Eigen::Vector3d f = gravity_force(params, gravity) + u;
-  const Eigen::Vector3d inv_mass(1.0 / params.mass, 1.0 / params.mass, 1.0 / params.inertia);
+  const Eigen::Vector3d inv_mass = inverse_mass_diagonal(params);
 
   RigidBodyState next;
   next.v = state.v + dt * f.cwiseProduct(inv_mass);
@@ -15,14 +17,13 @@ RigidBodyState step_body(const RigidBodyState& state, const RigidBodyParams& par
   return next;
 }
 
+
 StepJacobians step_body_jacobian(const RigidBodyState& state, const RigidBodyParams& params, const Eigen::Vector3d& /*u*/, double dt, double gravity) {
-  // u is accepted (it's the linearization point, mirroring
-  // step_body's signature) but unused: every force law is
-  // additive in u, so df/du = I unconditionally and doesn't depend on
+  // u is accepted (it's the linearization point, mirroring step_body's signature) but unused: every force law is
+  // additive in u, so df/du = Id unconditionally and doesn't depend on
   // u's actual value. See docs/derivations/integrator_jacobians.md.
   const ForceJacobian force_jac = gravity_force_jacobian(state.q, state.v, params, gravity);
-  const Eigen::Vector3d inv_mass(1.0 / params.mass, 1.0 / params.mass, 1.0 / params.inertia);
-  const Eigen::Matrix3d m_inv = inv_mass.asDiagonal();
+  const Eigen::Matrix3d m_inv = inverse_mass_diagonal(params).asDiagonal();
   const Eigen::Matrix3d identity3 = Eigen::Matrix3d::Identity();
 
   const Eigen::Matrix3d dv_dq = dt * m_inv * force_jac.df_dq;
@@ -45,6 +46,7 @@ StepJacobians step_body_jacobian(const RigidBodyState& state, const RigidBodyPar
   return jac;
 }
 
+
 std::vector<RigidBodyState> step_system(const std::vector<RigidBodyState>& states, const std::vector<RigidBodyParams>& params, const std::vector<Eigen::Vector3d>& u, double dt, double gravity) {
   assert(states.size() == params.size());
   assert(states.size() == u.size());
@@ -55,6 +57,7 @@ std::vector<RigidBodyState> step_system(const std::vector<RigidBodyState>& state
   }
   return next;
 }
+
 
 SystemStepJacobians step_system_jacobian(const std::vector<RigidBodyState>& states, const std::vector<RigidBodyParams>& params, const std::vector<Eigen::Vector3d>& u, double dt, double gravity) {
   assert(states.size() == params.size());

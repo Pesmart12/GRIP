@@ -20,24 +20,29 @@ namespace grip {
 // docs/derivations/symplectic_euler.md.
 RigidBodyState step_body(const RigidBodyState& state, const RigidBodyParams& params, const Eigen::Vector3d& u, double dt, double gravity = kDefaultGravity);
 
+
 // z = (q, v) stacked per StateVector's ordering (core/rigid_body.hpp).
 using StateJacobian = Eigen::Matrix<double, 6, 6>;
 using ControlJacobian = Eigen::Matrix<double, 6, 3>;
+
 
 struct StepJacobians {
   StateJacobian dz_dz;
   ControlJacobian dz_du;
 };
 
+
 // Analytic d(z_{t+1})/d(z_t) and d(z_{t+1})/du for step_body, via the
 // chain rule through ForceJacobian. See
 // docs/derivations/integrator_jacobians.md.
 StepJacobians step_body_jacobian(const RigidBodyState& state, const RigidBodyParams& params, const Eigen::Vector3d& u, double dt, double gravity = kDefaultGravity);
 
+
 // Multiple independent bodies -- still unconstrained, no coupling between
 // them. Steps each body with step_body above; no new integration math.
 // See docs/derivations/multi_body_system.md.
 std::vector<RigidBodyState> step_system(const std::vector<RigidBodyState>& states, const std::vector<RigidBodyParams>& params, const std::vector<Eigen::Vector3d>& u, double dt, double gravity = kDefaultGravity);
+
 
 // System state Z = concatenation of each body's (q, v), per
 // SystemStateVector's convention (core/rigid_body.hpp): body i at
@@ -51,6 +56,7 @@ std::vector<RigidBodyState> step_system(const std::vector<RigidBodyState>& state
 // docs/derivations/multi_body_system.md.
 using SystemStateJacobian = Eigen::MatrixXd;
 using SystemControlJacobian = Eigen::MatrixXd;
+
 
 struct SystemStepJacobians {
   SystemStateJacobian dZ_dZ;
