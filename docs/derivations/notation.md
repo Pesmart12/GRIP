@@ -46,7 +46,8 @@ contact normal.
 | `pᵢ` | vertex `i` in the world, `= c + R(θ)rᵢ` | 2-vector | `Contact::point` |
 | `n` | half-plane normal, unit, into free space | 2-vector | `HalfPlane::normal` |
 | `o` | half-plane offset from the origin along `n` | scalar | `HalfPlane::offset` |
-| `a^⊥` | perp operator, `(−a_y, aₓ)` | 2-vector | `Perp(a)` |
+| `a^⊥` | perp operator, `(−a_y, aₓ)`; `a` is a placeholder, not a quantity | 2-vector | `Perp(a)` |
+| `ρ` | body-frame offset of a reference point from the COM | 2-vector | — |
 
 The perp operator replaces what an earlier draft called `J` (the 90°
 rotation matrix `[[0,−1],[1,0]]`). That collided head-on with `J` for
@@ -61,6 +62,15 @@ offset avoids that, and is better anyway: a half-plane has exactly one
 positional degree of freedom, so storing a point would be redundant —
 two different points describe the same plane. This is the standard Hesse
 normal form.
+
+`ρ` is `0` everywhere in this project — the configuration's translational
+part *is* the center of mass, and `BodyShape::vertices` are stored relative
+to it. It has a symbol only because `symplectic_euler.md` needs to write the
+counterfactual `ρ ≠ 0` mass matrix to show what the COM choice buys: the
+off-diagonal coupling block, the `θ` dependence, and the parallel-axis term
+that all vanish at `ρ = 0`. Deliberately not `r`, which is taken by
+`rᵢ` (vertex `i` in the body frame) — `r₀` would collide with vertex 0 the
+same way the discarded `p₀` did.
 
 ## Contact
 

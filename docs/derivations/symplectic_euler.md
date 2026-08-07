@@ -16,10 +16,111 @@ respect to state and control, never with respect to body parameters.
   and would break the analytic Jacobians in step 2 for no benefit; if a
   display layer ever wants a wrapped angle, that's cosmetic and happens
   outside the state.
-- **2D rotation is abelian**, so `I` (scalar moment of inertia about the
-  out-of-plane axis) doesn't change as the body rotates. `M = diag(m, m, I)`
-  is constant — no `M(q)`, no Coriolis/gyroscopic terms, unlike 3D rigid
-  body dynamics.
+- **The mass matrix is constant and diagonal**, `M = diag(m, m, I)` — no
+  `M(q)`, no Coriolis/gyroscopic terms, unlike 3D rigid body dynamics. That
+  is two separate facts, derived in the next section.
+
+## The mass matrix
+
+The kinetic energy of a planar rigid body splits into a translational part
+and a rotational part:
+
+```
+T = ½m‖ċ‖² + ½Iω²
+```
+
+with `c` the center of mass and `I` the moment of inertia about the
+out-of-plane axis through it. Because the configuration is
+`q = (x, y, θ)` with `c = (x, y)`, the generalized velocity is
+`v = q̇ = (ẋ, ẏ, ω)` and the expression above is *already* a quadratic
+form in `v` with no cross terms:
+
+```
+T = ½ vᵀ M v,      M = diag(m, m, I)
+```
+
+Two independent facts produce that shape, and they're worth separating
+because they fail for different reasons.
+
+### Diagonality comes from measuring `q` at the center of mass
+
+`T` split cleanly above only because the translational term used `ċ` — the
+velocity of the *center of mass* specifically. That is König's theorem, and
+it is exactly what fails for any other reference point.
+
+Suppose the configuration tracked some other body-fixed point, offset from
+the COM by a fixed body-frame vector `ρ`, so the tracked point is
+`p = c + R(θ)ρ` and the configuration is `(p, θ)`. Then `c = p − R(θ)ρ`, and
+differentiating with `(dR/dθ)ρ = (Rρ)^⊥`:
+
+```
+ċ = ṗ − ω(Rρ)^⊥
+```
+
+Substituting into `T`, and using that `R` and the perp operator both
+preserve norm (`‖(Rρ)^⊥‖ = ‖ρ‖`):
+
+```
+T = ½m‖ṗ‖² − mω·ṗ·(Rρ)^⊥ + ½m‖ρ‖²ω² + ½Iω²
+  = ½m‖ṗ‖² − mω·ṗ·(Rρ)^⊥ + ½(I + m‖ρ‖²)ω²
+```
+
+which as a quadratic form in `v = (ṗ, ω)` is
+
+```
+        ⎡  m·Id₂          −m(Rρ)^⊥  ⎤
+M(θ) =  ⎢                            ⎥
+        ⎣ −m((Rρ)^⊥)ᵀ    I + m‖ρ‖²  ⎦
+```
+
+Three things went wrong at once, all of them from `ρ ≠ 0`:
+
+- **The off-diagonal block `−m(Rρ)^⊥` is nonzero**, coupling translation to
+  rotation. Pushing the body through the tracked point now also spins it.
+- **`M` acquired a `θ` dependence** through `R(θ)`, so it is no longer
+  constant — `Ṁ ≠ 0` brings velocity-quadratic (Coriolis-like) terms into
+  the equations of motion that `M = const` has none of.
+- **The rotational entry picked up `m‖ρ‖²`**, which is the parallel axis
+  theorem appearing on its own.
+
+Setting `ρ = 0` kills all three simultaneously. So `M` being diagonal is not
+a simplification we chose — it is the payment for having defined `q`'s
+translational part *as* the center of mass, which `RigidBodyState` does.
+It's also why `BodyShape::vertices` are stored relative to the COM rather
+than to some geometric origin: moving that reference would move `ρ` off zero
+and reintroduce every term above.
+
+### Constancy comes from 2D
+
+Even at the COM, `M` need not be constant. In 3D the world-frame inertia
+tensor is `R·I_body·Rᵀ`, which genuinely varies with orientation, giving
+`M(q)` and the gyroscopic terms that make 3D rigid body dynamics awkward.
+
+In 2D there is a single rotation axis, so `I` is a *scalar*, and
+`R·I·Rᵀ = I·R·Rᵀ = I` for any rotation. The moment of inertia a planar body
+presents is the same at every orientation. `M` is therefore constant in
+time as well as diagonal, and `∂M/∂q = 0` drops out of every Jacobian in
+`integrator_jacobians.md` before it is ever written down.
+
+### Inversion is therefore free
+
+```
+M⁻¹ = diag(1/m, 1/m, 1/I)
+```
+
+Three reciprocals, no factorization, no `q` dependence, nothing to
+recompute as the body moves. `src/dynamics/mass.hpp` is the single place
+this is encoded, returning the three diagonal entries as a 3-vector rather
+than a 3×3 — the two call sites need different spellings of the same
+object (`.cwiseProduct()` against a vector operand, `.asDiagonal()` against
+a matrix one) and a vector converts to either.
+
+This stops being a throwaway convenience at step 6. The central object of a
+velocity-level contact solver is the Delassus operator `J M⁻¹ Jᵀ`, the
+effective mass seen at a contact point; every formulation compared in
+step 8 builds it. That `M⁻¹` is diagonal and constant is what keeps that
+assembly cheap and keeps its derivative with respect to `q` identically
+zero.
 
 ## Control input
 
