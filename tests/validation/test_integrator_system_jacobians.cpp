@@ -5,6 +5,8 @@
 #include <Eigen/LU>
 #include <gtest/gtest.h>
 
+#include "contact/half_plane.hpp"
+#include "contact/penalty.hpp"
 #include "core/rigid_body.hpp"
 #include "dynamics/integrator.hpp"
 #include "utils/finite_difference.hpp"
@@ -43,20 +45,21 @@ TEST(SystemJacobians, MatchCentralFiniteDifference) {
   params[0] = RigidBodyParams{2.3, 0.6};
   params[1] = RigidBodyParams{0.9, 1.4};
 
+  const std::vector<BodyShape> shapes(2);  // no vertices: free flight
   const std::vector<Eigen::Vector3d> u = {Eigen::Vector3d(0.5, -0.3, 0.2), Eigen::Vector3d(-0.4, 0.1, 0.6)};
   const double dt = 0.05;
   const double gravity = kDefaultGravity;
   const std::size_t num_bodies = states.size();
 
-  const SystemStepJacobians analytic = step_system_jacobian(states, params, u, dt, gravity);
+  const SystemStepJacobians analytic = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, u, dt, gravity);
 
   const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> step_from_state = [&](const Eigen::VectorXd& x) {
-    return PackSystem(step_system(UnpackSystem(x, num_bodies), params, u, dt, gravity));
+    return PackSystem(step_system(UnpackSystem(x, num_bodies), params, shapes, HalfPlane{}, PenaltyParams{}, u, dt, gravity));
   };
   const Eigen::MatrixXd fd_dZ_dZ = testutil::CentralDifferenceJacobianXd(step_from_state, PackSystem(states));
 
   const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> step_from_control = [&](const Eigen::VectorXd& flat_u) {
-    return PackSystem(step_system(states, params, UnflattenControls(flat_u, num_bodies), dt, gravity));
+    return PackSystem(step_system(states, params, shapes, HalfPlane{}, PenaltyParams{}, UnflattenControls(flat_u, num_bodies), dt, gravity));
   };
   const Eigen::MatrixXd fd_dZ_dU = testutil::CentralDifferenceJacobianXd(step_from_control, FlattenControls(u));
 
@@ -85,10 +88,11 @@ TEST(SystemJacobians, OffDiagonalBlocksAreExactlyZero) {
   states[0].q = Eigen::Vector3d(1.0, 2.0, 3.0);
   states[1].q = Eigen::Vector3d(-1.0, 0.5, -0.2);
   const std::vector<RigidBodyParams> params(2, RigidBodyParams{1.2, 0.8});
+  const std::vector<BodyShape> shapes(2);  // no vertices: free flight
   const std::vector<Eigen::Vector3d> u(2, Eigen::Vector3d::Zero());
   const double dt = 0.02;
 
-  const SystemStepJacobians jac = step_system_jacobian(states, params, u, dt, kDefaultGravity);
+  const SystemStepJacobians jac = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, u, dt, kDefaultGravity);
 
   const Eigen::MatrixXd off_diag_01 = jac.dZ_dZ.block<6, 6>(0, 6);
   const Eigen::MatrixXd off_diag_10 = jac.dZ_dZ.block<6, 6>(6, 0);
@@ -117,9 +121,10 @@ TEST(SystemJacobians, ConservativeStepPreservesPhaseSpaceVolume) {
   params[1] = RigidBodyParams{3.7, 0.2};
   params[2] = RigidBodyParams{0.4, 2.9};
 
+  const std::vector<BodyShape> shapes(3);  // no vertices: free flight
   const std::vector<Eigen::Vector3d> u(3, Eigen::Vector3d(0.5, -0.2, 0.8));
 
-  const SystemStepJacobians jac = step_system_jacobian(states, params, u, 0.03, kDefaultGravity);
+  const SystemStepJacobians jac = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, u, 0.03, kDefaultGravity);
 
   EXPECT_NEAR(jac.dZ_dZ.determinant(), 1.0, 1e-14);
 }

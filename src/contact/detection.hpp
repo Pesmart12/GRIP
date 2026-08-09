@@ -24,6 +24,7 @@ struct Contact {
   Eigen::Vector2d point = Eigen::Vector2d::Zero();
 };
 
+
 // Every vertex of the body against the plane, in vertex order --
 // including separated ones. Reporting all of them keeps each d_i a
 // smooth linear function of q with no branching, so the non-smoothness
@@ -31,6 +32,7 @@ struct Contact {
 // applies. It also makes boundary margins available without a separate
 // query. See docs/derivations/contact_detection.md.
 std::vector<Contact> detect_contacts_body(const RigidBodyState& state, const BodyShape& shape, const HalfPlane& plane);
+
 
 // Analytic contact Jacobian J_i = d(d_i)/dq for each contact, in the
 // same vertex order: [n_x, n_y, n . (p_i - c)^perp]. One row vector per

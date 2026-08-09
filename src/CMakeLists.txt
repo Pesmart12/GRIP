@@ -1,5 +1,6 @@
 add_library(grip_core
   contact/detection.cpp
+  contact/penalty.cpp
   dynamics/forces.cpp
   dynamics/integrator.cpp
 )

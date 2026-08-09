@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include "contact/half_plane.hpp"
+#include "contact/penalty.hpp"
 #include "core/rigid_body.hpp"
 #include "dynamics/integrator.hpp"
 
@@ -16,6 +18,7 @@ TEST(SystemStep, IndependentBodiesMatchOwnClosedForm) {
   // v_n = n*dt*a, x_n = dt^2*a*n(n+1)/2.
   std::vector<RigidBodyState> states(3);
   std::vector<RigidBodyParams> params(3);
+  const std::vector<BodyShape> shapes(3);  // no vertices: free flight
   std::vector<Eigen::Vector3d> u(3, Eigen::Vector3d::Zero());
 
   params[0] = RigidBodyParams{/*mass=*/1.0, /*inertia=*/1.0};  // gravity only
@@ -31,7 +34,7 @@ TEST(SystemStep, IndependentBodiesMatchOwnClosedForm) {
   const int n = 10;
 
   for (int i = 0; i < n; ++i) {
-    states = step_system(states, params, u, dt, g);
+    states = step_system(states, params, shapes, HalfPlane{}, PenaltyParams{}, u, dt, g);
   }
 
   const double gravity_vy = n * dt * (-g);
@@ -61,6 +64,7 @@ TEST(SystemStep, PerturbingOneBodyDoesNotAffectAnother) {
   // body B's output must be bit-identical whether or not body A's
   // initial state is perturbed, since the bodies don't couple.
   const std::vector<RigidBodyParams> params(2, RigidBodyParams{1.5, 0.7});
+  const std::vector<BodyShape> shapes(2);  // no vertices: free flight
   const std::vector<Eigen::Vector3d> u(2, Eigen::Vector3d(0.2, -0.1, 0.3));
   const double dt = 0.02;
 
@@ -73,8 +77,8 @@ TEST(SystemStep, PerturbingOneBodyDoesNotAffectAnother) {
   std::vector<RigidBodyState> perturbed = baseline;
   perturbed[0].q.x() += 0.1;  // only body 0 changes
 
-  const std::vector<RigidBodyState> baseline_next = step_system(baseline, params, u, dt);
-  const std::vector<RigidBodyState> perturbed_next = step_system(perturbed, params, u, dt);
+  const std::vector<RigidBodyState> baseline_next = step_system(baseline, params, shapes, HalfPlane{}, PenaltyParams{}, u, dt);
+  const std::vector<RigidBodyState> perturbed_next = step_system(perturbed, params, shapes, HalfPlane{}, PenaltyParams{}, u, dt);
 
   EXPECT_TRUE(baseline_next[1].q.isApprox(perturbed_next[1].q, 0.0));
   EXPECT_TRUE(baseline_next[1].v.isApprox(perturbed_next[1].v, 0.0));

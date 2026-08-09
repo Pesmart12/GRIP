@@ -81,6 +81,10 @@ same way the discarded `p₀` did.
 | `Jᵢ` | contact Jacobian `∂dᵢ/∂q` | 1×3 row | — |
 | `λᵢ` | normal force magnitude at contact `i` | scalar | — |
 | `k`, `b` | contact stiffness, damping | scalars | — |
+| `U` | penalty potential, `= Σᵢ (k/2)·min(0, dᵢ)²` | scalar | — |
+| `J_A` | active contact Jacobians, stacked one row per active contact | a×3 | — |
+| `Delassus` | inverse effective mass at the contacts, `= J_A M⁻¹ J_Aᵀ` | a×a | `delassus` |
+| `eig_max(·)` | largest eigenvalue | operator | — |
 
 `d` rather than `φ` for the gap. `φ` is the contact-dynamics convention
 (Stewart–Trinkle, Anitescu, Dojo), but this project uses `θ` for body
@@ -109,6 +113,20 @@ Nothing is called `W`. "Wrench" is a useful word for a
 force-plus-torque 3-vector, but `W` is conventionally *work*, and the
 duality argument for `Jᵀ` is itself a virtual-work argument. Contact
 contributes `f_c` to the same `f` the integrator already sums.
+
+**`Delassus` is spelled out rather than lettered**, and so is
+`eig_max(·)`. Every short candidate collides. The contact literature
+variously uses `W` (banned above), `G`, `D`, `A`, or `Λ` — but `G`/`g`
+duplicates gravitational acceleration, `D`/`d` duplicates the gap, and
+`Λ`/`λ` duplicates the normal force magnitude, all by the same
+case-difference rule that already ruled out `N` for normal force.
+`eig_max` exists for the same reason: `λ_max` is the natural spelling for
+a largest eigenvalue everywhere else in mathematics, and here it reads as
+"the largest contact force." A name that says what it is beats a letter
+you have to look up — the same reasoning that gave `a^⊥` its spelling.
+The subscript `A` in `J_A` marks the *active* contacts (`a` of them),
+since the Delassus operator is assembled only over contacts that are
+actually carrying force.
 
 ## Dots and subscripts
 

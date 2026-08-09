@@ -31,6 +31,7 @@ std::vector<Contact> detect_contacts_body(const RigidBodyState& state, const Bod
   return contacts;
 }
 
+
 std::vector<Eigen::RowVector3d> detect_contacts_body_jacobian(const RigidBodyState& state, const BodyShape& shape, const HalfPlane& plane) {
   const Eigen::Matrix2d rotation = Eigen::Rotation2Dd(state.q.z()).toRotationMatrix();
 

@@ -220,3 +220,10 @@ growth by contrast. Practical implication carried forward: the `|ω·dt| < 2`
 stability bound will matter again once step 5 introduces a stiff contact
 spring — a large step size paired with a stiff `k` can push the discrete
 map outside this bound and the bounded-oscillation guarantee disappears.
+
+That turned out not to be the binding constraint. `penalty_contact.md`
+works it through: the relevant frequency is set by the Delassus operator
+rather than by `k/m` alone, and *resolving* a contact episode with enough
+steps to integrate it accurately is roughly 150× more restrictive than
+merely staying stable. Stability is reached long before the bounce is
+sampled well enough to be worth trusting.

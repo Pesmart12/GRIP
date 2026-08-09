@@ -3,6 +3,8 @@
 #include <Eigen/LU>
 #include <gtest/gtest.h>
 
+#include "contact/half_plane.hpp"
+#include "contact/penalty.hpp"
 #include "core/rigid_body.hpp"
 #include "dynamics/integrator.hpp"
 #include "utils/finite_difference.hpp"
@@ -24,15 +26,15 @@ TEST(IntegratorJacobians, MatchCentralFiniteDifference) {
   const double dt = 0.05;
   const double gravity = kDefaultGravity;
 
-  const StepJacobians analytic = step_body_jacobian(state, params, u, dt, gravity);
+  const StepJacobians analytic = step_body_jacobian(state, params, BodyShape{}, HalfPlane{}, PenaltyParams{}, u, dt, gravity);
 
   const std::function<StateVector(const StateVector&)> step_from_state = [&](const StateVector& x) {
-    return Pack(step_body(Unpack(x), params, u, dt, gravity));
+    return Pack(step_body(Unpack(x), params, BodyShape{}, HalfPlane{}, PenaltyParams{}, u, dt, gravity));
   };
   const StateJacobian fd_dz_dz = testutil::CentralDifferenceJacobian<6, 6>(step_from_state, Pack(state));
 
   const std::function<StateVector(const Eigen::Vector3d&)> step_from_control = [&](const Eigen::Vector3d& u_perturbed) {
-    return Pack(step_body(state, params, u_perturbed, dt, gravity));
+    return Pack(step_body(state, params, BodyShape{}, HalfPlane{}, PenaltyParams{}, u_perturbed, dt, gravity));
   };
   const ControlJacobian fd_dz_du = testutil::CentralDifferenceJacobian<6, 3>(step_from_control, u);
 
@@ -61,7 +63,7 @@ TEST(IntegratorJacobians, GravityContributesZeroStateCoupling) {
   const Eigen::Vector3d u = Eigen::Vector3d::Zero();
   const double dt = 0.02;
 
-  const StepJacobians jac = step_body_jacobian(state, params, u, dt, kDefaultGravity);
+  const StepJacobians jac = step_body_jacobian(state, params, BodyShape{}, HalfPlane{}, PenaltyParams{}, u, dt, kDefaultGravity);
 
   const Eigen::Matrix3d dv_dq_block = jac.dz_dz.block<3, 3>(3, 0);
   EXPECT_TRUE(dv_dq_block.isZero(0.0));
@@ -88,7 +90,7 @@ TEST(IntegratorJacobians, ConservativeStepPreservesPhaseSpaceVolume) {
   // Determinant is 1 regardless of body parameters, timestep, or
   // operating point -- vary them to document that invariance.
   for (const RigidBodyParams& params : {RigidBodyParams{1.0, 1.0}, RigidBodyParams{3.7, 0.2}}) {
-    const StepJacobians jac = step_body_jacobian(state, params, Eigen::Vector3d(0.5, -0.2, 0.8), dt, kDefaultGravity);
+    const StepJacobians jac = step_body_jacobian(state, params, BodyShape{}, HalfPlane{}, PenaltyParams{}, Eigen::Vector3d(0.5, -0.2, 0.8), dt, kDefaultGravity);
     EXPECT_NEAR(jac.dz_dz.determinant(), 1.0, 1e-14) << "mass " << params.mass << ", inertia " << params.inertia;
   }
 }

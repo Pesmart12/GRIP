@@ -114,9 +114,22 @@ This is a different kind of test from the finite-difference comparison.
 FD asks whether the analytic Jacobian matches the implementation; the
 determinant asks whether the Jacobian has the structure the integrator's
 design promises. It holds for *any* conservative force, so it keeps its
-teeth as force laws are added — and it should correctly **stop** holding
-once velocity-dependent damping arrives in step 5, since dissipation
-contracts phase-space volume rather than preserving it. The
-system-level version follows immediately: `dZ_dZ` is block-diagonal, so
-its determinant is the product of per-body determinants, hence 1 for any
-body count.
+teeth as force laws are added. The system-level version follows
+immediately: `dZ_dZ` is block-diagonal, so its determinant is the product
+of per-body determinants, hence 1 for any body count.
+
+Redoing the same block algebra *without* assuming `∂f/∂v = 0` shows this
+is a special case of a sharper identity — the `∂f/∂q` terms cancel
+whatever `∂f/∂v` is, leaving
+
+```
+det(dz_dz) = det(Id + dt·M⁻¹·∂f/∂v)
+```
+
+so `∂f/∂q` never affects the determinant at all. Step 5a's penalty spring
+is conservative and keeps `det = 1`, but now with a nonzero,
+configuration-dependent `∂f/∂q`, which is what makes the cancellation
+non-vacuous for the first time. Step 5b's damper breaks it by an exactly
+computable amount — `det(dz_dz) = det(Id − dt·b·Delassus)` over the
+contacts carrying force, strictly less than 1, since dissipation
+contracts phase-space volume. Both derived in `penalty_contact.md`.

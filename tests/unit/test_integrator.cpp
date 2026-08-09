@@ -1,18 +1,23 @@
 #include <gtest/gtest.h>
 
+#include "contact/half_plane.hpp"
+#include "contact/penalty.hpp"
 #include "core/rigid_body.hpp"
 #include "dynamics/integrator.hpp"
 
 namespace grip {
 namespace {
 
+// These are free-flight tests: BodyShape{} has no vertices, so there are
+// no contacts and the penalty term is identically zero regardless of the
+// plane or the stiffness.
 TEST(SymplecticEulerStep, GravityFromRestSingleStep) {
   RigidBodyState state;    // q = v = 0
   RigidBodyParams params;  // mass = inertia = 1
   const double dt = 0.01;
   const double g = 9.81;
 
-  const RigidBodyState next = step_body(state, params, Eigen::Vector3d::Zero(), dt, g);
+  const RigidBodyState next = step_body(state, params, BodyShape{}, HalfPlane{}, PenaltyParams{}, Eigen::Vector3d::Zero(), dt, g);
 
   const double expected_vy = -dt * g;
   const double expected_qy = dt * expected_vy;  // = -dt^2 * g
@@ -34,7 +39,7 @@ TEST(SymplecticEulerStep, GravityFromRestMultiStepClosedForm) {
   const int n = 10;
 
   for (int i = 0; i < n; ++i) {
-    state = step_body(state, params, Eigen::Vector3d::Zero(), dt, g);
+    state = step_body(state, params, BodyShape{}, HalfPlane{}, PenaltyParams{}, Eigen::Vector3d::Zero(), dt, g);
   }
 
   // Recursion v_i = v_{i-1} + dt*a, q_i = q_{i-1} + dt*v_i, from rest,
@@ -58,7 +63,7 @@ TEST(SymplecticEulerStep, ConstantWrenchDecouplesAcrossAxes) {
   const double gravity = 0.0;              // isolate the wrench
   const Eigen::Vector3d u(4.0, 0.0, 1.0);  // fx and tau only, no fy
 
-  const RigidBodyState next = step_body(state, params, u, dt, gravity);
+  const RigidBodyState next = step_body(state, params, BodyShape{}, HalfPlane{}, PenaltyParams{}, u, dt, gravity);
 
   const double expected_vx = dt * (u.x() / params.mass);
   const double expected_omega = dt * (u.z() / params.inertia);
