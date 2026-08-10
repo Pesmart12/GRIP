@@ -20,6 +20,7 @@ things.** If a new quantity needs a letter, add it here first.
 | `g` | gravitational acceleration | scalar | `kDefaultGravity` |
 | `dt` | timestep | scalar | `dt` |
 | `B` | number of bodies | scalar | — |
+| `T` | kinetic energy | scalar | — |
 | `Id` | identity matrix | square | `Matrix3d::Identity()` |
 
 `z` rather than `x` for the stacked state: `q = (x, y, θ)` already uses
@@ -127,6 +128,31 @@ you have to look up — the same reasoning that gave `a^⊥` its spelling.
 The subscript `A` in `J_A` marks the *active* contacts (`a` of them),
 since the Delassus operator is assembled only over contacts that are
 actually carrying force.
+
+## Gradients
+
+| symbol | meaning | shape | code |
+|---|---|---|---|
+| `H` | rollout horizon, in steps | scalar | `horizon` |
+| `adjoint` | costate, `= dJ/dZ_t` | 6B-vector | `adjoint` |
+| `J` | the caller's scalar objective | scalar | — |
+| `ℓ_t` | the caller's stage cost at step `t` | scalar | — |
+
+`H` for the horizon, not `T`: `T` is kinetic energy in
+`symplectic_euler.md`, which is where the mass matrix comes from. `N` is
+out for the same reason it was rejected as the body count — it differs
+from `n`, the contact normal, only by case.
+
+`adjoint` is spelled out rather than lettered. Optimal control calls it
+`λ` or `p`, and both are taken here — `λᵢ` is the normal force magnitude,
+`pᵢ` is a world-frame vertex — while `μ` is reserved for friction. Same
+resolution as `Delassus`: when every short candidate collides, use the
+name.
+
+`J` and `ℓ` are the **consumer's**, not GRIP's. They appear in
+`adjoint.md` only as scaffolding, to show where the seeds `∂ℓ/∂Z` and
+`∂ℓ/∂U` come from. The API never sees a cost function — a cost is a task
+definition, and tasks live in the repositories that call this one.
 
 ## Dots and subscripts
 

@@ -83,4 +83,34 @@ inline std::vector<RigidBodyState> UnpackSystem(const SystemStateVector& x, std:
   return states;
 }
 
+
+// The same stacking for control wrenches: body i at [3i, 3i+3). Forward
+// simulation passes controls as std::vector<Eigen::Vector3d>, one named
+// wrench per body; the gradient path treats them as a point in R^{3B},
+// because that is what a control Jacobian multiplies. Same two-representation
+// split as RigidBodyState vs. StateVector, and the same reason.
+using SystemControlVector = Eigen::VectorXd;
+
+
+inline SystemControlVector PackControls(const std::vector<Eigen::Vector3d>& u) {
+  SystemControlVector packed(3 * u.size());
+
+  for (std::size_t i = 0; i < u.size(); ++i) {
+    packed.segment<3>(static_cast<Eigen::Index>(3 * i)) = u[i];
+  }
+
+  return packed;
+}
+
+
+inline std::vector<Eigen::Vector3d> UnpackControls(const SystemControlVector& packed, std::size_t num_bodies) {
+  std::vector<Eigen::Vector3d> u(num_bodies);
+
+  for (std::size_t i = 0; i < num_bodies; ++i) {
+    u[i] = packed.segment<3>(static_cast<Eigen::Index>(3 * i));
+  }
+
+  return u;
+}
+
 }  // namespace grip
