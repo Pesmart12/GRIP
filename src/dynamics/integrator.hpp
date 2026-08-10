@@ -11,72 +11,118 @@
 
 namespace grip {
 
-// One symplectic (semi-implicit) Euler step for a single body:
-//   f       = gravity_force(params, gravity) + penalty_force_body(...) + u
-//   v_{t+1} = v_t + dt * M^-1 * f
+// ===========================================================================
+// Integration
+//
+// These four functions are the whole integrator, and they know nothing about
+// contact -- not polygons, not half-planes, not stiffness. They take a force
+// that somebody else assembled and advance the state.
+//
+// That separation is what lets contact change without the numerical core
+// changing with it. It also becomes load-bearing at the body-body step:
+// a contact between two bodies puts +J^T lambda on one and -J^T lambda on the
+// other, so contact forces stop decomposing per body and have to be assembled
+// over the system before any integration happens.
+// ===========================================================================
+
+// One symplectic (semi-implicit) Euler step for a single body, given the
+// total generalized force already summed:
+//
+//   v_{t+1} = v_t + dt * M^-1 * force
 //   q_{t+1} = q_t + dt * v_{t+1}
 //
-// Force is evaluated at the old state (q_t, v_t); position is updated
-// using the new velocity v_{t+1}. That ordering, not the force law
-// itself, is what makes this scheme symplectic. u is a generalized
-// wrench (fx, fy, tau) applied at the center of mass; the contact force
-// is a separate term rather than being folded into u, because u is
-// state-independent (df/du = Id) and the contact force is not. See
-// docs/derivations/symplectic_euler.md.
-//
-// A body with no vertices has no contacts, so BodyShape{} makes the
-// contact term identically zero and recovers the steps 1-3 behaviour.
-RigidBodyState step_body(const RigidBodyState& state, const RigidBodyParams& params, const BodyShape& shape, const HalfPlane& plane, const PenaltyParams& penalty, const Eigen::Vector3d& u, double dt, double gravity = kDefaultGravity);
+// The caller evaluates the force at the OLD state; the position update then
+// uses the NEW velocity. That ordering, not the force law, is what makes the
+// scheme symplectic. See docs/derivations/symplectic_euler.md.
+RigidBodyState integrate_body(const RigidBodyState& state, const RigidBodyParams& params, const Eigen::Vector3d& force, double dt);
 
 
 // z = (q, v) stacked per StateVector's ordering (core/rigid_body.hpp).
 using StateJacobian = Eigen::Matrix<double, 6, 6>;
-using ControlJacobian = Eigen::Matrix<double, 6, 3>;
+
+
+// d(z_{t+1})/d(force): how the step responds to the force it was handed.
+//
+// This is also exactly the control Jacobian d(z_{t+1})/du, because u enters
+// every force law additively and so df/du = Id unconditionally. They are the
+// same matrix, not merely equal in value -- which is why the integrator does
+// not need to see u at all. See docs/derivations/integrator_jacobians.md.
+using ForceSensitivity = Eigen::Matrix<double, 6, 3>;
 
 
 struct StepJacobians {
   StateJacobian dz_dz;
-  ControlJacobian dz_du;
+  ForceSensitivity dz_df;
 };
 
 
-// Analytic d(z_{t+1})/d(z_t) and d(z_{t+1})/du for step_body, via the
-// chain rule through ForceJacobian. Force laws are additive and so are
-// their Jacobians, so adding contact enriches df/dq and df/dv without
-// changing the assembly below them. See
-// docs/derivations/integrator_jacobians.md.
-StepJacobians step_body_jacobian(const RigidBodyState& state, const RigidBodyParams& params, const BodyShape& shape, const HalfPlane& plane, const PenaltyParams& penalty, const Eigen::Vector3d& u, double dt, double gravity = kDefaultGravity);
+// Analytic Jacobians of integrate_body.
+//
+// Deliberately takes no state. The integrator's Jacobian depends only on the
+// mass matrix, the timestep, and the force law's derivatives -- never on the
+// operating point directly. That was true before this signature said so; now
+// the type carries it.
+StepJacobians integrate_body_jacobian(const RigidBodyParams& params, const ForceJacobian& force_jacobian, double dt);
 
 
-// Multiple bodies against the same static half-plane. They still don't
-// couple to each other -- the plane is scenery, not a body, so each
-// body's contact force reads only its own state. Steps each body with
-// step_body above; no new integration math. shapes is indexed alongside
-// params; plane and penalty are shared. See
-// docs/derivations/multi_body_system.md.
-std::vector<RigidBodyState> step_system(const std::vector<RigidBodyState>& states, const std::vector<RigidBodyParams>& params, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty, const std::vector<Eigen::Vector3d>& u, double dt, double gravity = kDefaultGravity);
+// N bodies, each integrated with integrate_body above. forces is indexed
+// alongside states and params. No coupling happens here -- if two bodies
+// interact, that already happened when their forces were assembled.
+std::vector<RigidBodyState> integrate_system(const std::vector<RigidBodyState>& states, const std::vector<RigidBodyParams>& params, const std::vector<Eigen::Vector3d>& forces, double dt);
 
 
 // System state Z = concatenation of each body's (q, v), per
 // SystemStateVector's convention (core/rigid_body.hpp): body i at
-// [6i, 6i+6). Since bodies don't couple yet, dZ_dZ and dZ_dU are exactly
-// block-diagonal -- each block is the already-validated per-body
-// StepJacobians, placed at (6i, 6i) / (6i, 3i). Penalty contact against
-// the static plane did not change that: it only made each diagonal
-// block richer, since a body's contact force reads its own state alone.
-// Block-diagonality stops holding only for actual body-body contact,
-// which is handled by a structurally different (IFT) gradient path in
-// steps 6-7, not by extending this assembly. See
-// docs/derivations/multi_body_system.md.
+// [6i, 6i+6).
 using SystemStateJacobian = Eigen::MatrixXd;
-using SystemControlJacobian = Eigen::MatrixXd;
+using SystemForceSensitivity = Eigen::MatrixXd;
 
 
 struct SystemStepJacobians {
   SystemStateJacobian dZ_dZ;
-  SystemControlJacobian dZ_dU;
+  SystemForceSensitivity dZ_dF;
 };
 
-SystemStepJacobians step_system_jacobian(const std::vector<RigidBodyState>& states, const std::vector<RigidBodyParams>& params, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty, const std::vector<Eigen::Vector3d>& u, double dt, double gravity = kDefaultGravity);
+
+// Per-body ForceJacobians in, block-diagonal system Jacobian out. The
+// block-diagonal structure is a statement about the forces, not about the
+// integrator: it holds exactly as long as body i's force reads body i's state
+// alone, which is true for gravity, control, and contact against static
+// scenery. Body-body contact is what breaks it, and it breaks it by making
+// dF/dQ couple -- at which point this signature needs a representation that
+// can express that coupling, following the contact graph's sparsity. See
+// docs/derivations/multi_body_system.md.
+SystemStepJacobians integrate_system_jacobian(const std::vector<RigidBodyParams>& params, const std::vector<ForceJacobian>& force_jacobians, double dt);
+
+
+// ===========================================================================
+// Assembly
+//
+// Thin convenience over the above: sum gravity, penalty contact and the
+// control wrench, then integrate. Provided so the common path is a single
+// call that cannot evaluate the force and its Jacobian at different states.
+//
+// Deliberately stateless and deliberately not a stability promise. The public
+// API arrives with the bindings work and will likely replace these with a
+// scene-level entry point; nothing here should accumulate state or caching in
+// the meantime, or it stops being cheap to discard.
+// ===========================================================================
+
+// A body with no vertices has no contacts, so BodyShape{} makes the contact
+// term identically zero and recovers free flight.
+RigidBodyState step_body(const RigidBodyState& state, const RigidBodyParams& params, const BodyShape& shape, const HalfPlane& plane, const PenaltyParams& penalty, const Eigen::Vector3d& u, double dt, double gravity = kDefaultGravity);
+
+
+StepJacobians step_body_jacobian(const RigidBodyState& state, const RigidBodyParams& params, const BodyShape& shape, const HalfPlane& plane, const PenaltyParams& penalty, double dt, double gravity = kDefaultGravity);
+
+
+// Multiple bodies against the same static half-plane. They do not couple to
+// each other -- the plane is scenery, not a body, so each body's contact
+// force reads only its own state. shapes is indexed alongside params; plane
+// and penalty are shared.
+std::vector<RigidBodyState> step_system(const std::vector<RigidBodyState>& states, const std::vector<RigidBodyParams>& params, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty, const std::vector<Eigen::Vector3d>& u, double dt, double gravity = kDefaultGravity);
+
+
+SystemStepJacobians step_system_jacobian(const std::vector<RigidBodyState>& states, const std::vector<RigidBodyParams>& params, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty, double dt, double gravity = kDefaultGravity);
 
 }  // namespace grip

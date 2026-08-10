@@ -37,7 +37,7 @@ Eigen::Vector3d penalty_force_body(const RigidBodyState& state, const BodyShape&
 
   Eigen::Vector3d force = Eigen::Vector3d::Zero();
   for (std::size_t i = 0; i < contacts.size(); ++i) {
-    const double closing_rate = jacobians[i].dot(state.v);
+  const double closing_rate = jacobians[i].dot(state.v);
     const double normal_force = NormalForceMagnitude(contacts[i].signed_distance, closing_rate, penalty);
     force += jacobians[i].transpose() * normal_force;
   }

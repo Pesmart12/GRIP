@@ -51,7 +51,7 @@ TEST(SystemJacobians, MatchCentralFiniteDifference) {
   const double gravity = kDefaultGravity;
   const std::size_t num_bodies = states.size();
 
-  const SystemStepJacobians analytic = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, u, dt, gravity);
+  const SystemStepJacobians analytic = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, dt, gravity);
 
   const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> step_from_state = [&](const Eigen::VectorXd& x) {
     return PackSystem(step_system(UnpackSystem(x, num_bodies), params, shapes, HalfPlane{}, PenaltyParams{}, u, dt, gravity));
@@ -66,17 +66,19 @@ TEST(SystemJacobians, MatchCentralFiniteDifference) {
   constexpr double kTol = 1e-6;
   ASSERT_EQ(analytic.dZ_dZ.rows(), fd_dZ_dZ.rows());
   ASSERT_EQ(analytic.dZ_dZ.cols(), fd_dZ_dZ.cols());
-  ASSERT_EQ(analytic.dZ_dU.rows(), fd_dZ_dU.rows());
-  ASSERT_EQ(analytic.dZ_dU.cols(), fd_dZ_dU.cols());
+  ASSERT_EQ(analytic.dZ_dF.rows(), fd_dZ_dU.rows());
+  ASSERT_EQ(analytic.dZ_dF.cols(), fd_dZ_dU.cols());
 
   for (Eigen::Index i = 0; i < analytic.dZ_dZ.rows(); ++i) {
     for (Eigen::Index j = 0; j < analytic.dZ_dZ.cols(); ++j) {
       EXPECT_NEAR(analytic.dZ_dZ(i, j), fd_dZ_dZ(i, j), kTol)
           << "dZ_dZ mismatch at (" << i << ", " << j << ")";
     }
-    for (Eigen::Index j = 0; j < analytic.dZ_dU.cols(); ++j) {
-      EXPECT_NEAR(analytic.dZ_dU(i, j), fd_dZ_dU(i, j), kTol)
-          << "dZ_dU mismatch at (" << i << ", " << j << ")";
+    // dZ_dF against a finite difference in U: the two coincide because each
+    // body's control enters its own force additively, so dF/dU = Id.
+    for (Eigen::Index j = 0; j < analytic.dZ_dF.cols(); ++j) {
+      EXPECT_NEAR(analytic.dZ_dF(i, j), fd_dZ_dU(i, j), kTol)
+          << "dZ_dF mismatch at (" << i << ", " << j << ")";
     }
   }
 }
@@ -92,12 +94,12 @@ TEST(SystemJacobians, OffDiagonalBlocksAreExactlyZero) {
   const std::vector<Eigen::Vector3d> u(2, Eigen::Vector3d::Zero());
   const double dt = 0.02;
 
-  const SystemStepJacobians jac = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, u, dt, kDefaultGravity);
+  const SystemStepJacobians jac = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, dt, kDefaultGravity);
 
   const Eigen::MatrixXd off_diag_01 = jac.dZ_dZ.block<6, 6>(0, 6);
   const Eigen::MatrixXd off_diag_10 = jac.dZ_dZ.block<6, 6>(6, 0);
-  const Eigen::MatrixXd off_diag_control_01 = jac.dZ_dU.block<6, 3>(0, 3);
-  const Eigen::MatrixXd off_diag_control_10 = jac.dZ_dU.block<6, 3>(6, 0);
+  const Eigen::MatrixXd off_diag_control_01 = jac.dZ_dF.block<6, 3>(0, 3);
+  const Eigen::MatrixXd off_diag_control_10 = jac.dZ_dF.block<6, 3>(6, 0);
 
   EXPECT_TRUE(off_diag_01.isZero(0.0));
   EXPECT_TRUE(off_diag_10.isZero(0.0));
@@ -124,7 +126,7 @@ TEST(SystemJacobians, ConservativeStepPreservesPhaseSpaceVolume) {
   const std::vector<BodyShape> shapes(3);  // no vertices: free flight
   const std::vector<Eigen::Vector3d> u(3, Eigen::Vector3d(0.5, -0.2, 0.8));
 
-  const SystemStepJacobians jac = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, u, 0.03, kDefaultGravity);
+  const SystemStepJacobians jac = step_system_jacobian(states, params, shapes, HalfPlane{}, PenaltyParams{}, 0.03, kDefaultGravity);
 
   EXPECT_NEAR(jac.dZ_dZ.determinant(), 1.0, 1e-14);
 }

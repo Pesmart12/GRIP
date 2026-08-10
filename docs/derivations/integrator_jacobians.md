@@ -59,13 +59,49 @@ operating point `(q_t, v_t, u)` at all. That stops being true the moment a
 `ForceJacobian` exists so that addition plugs into the chain-rule assembly
 in `step_body_jacobian` without changing its structure.
 
-## Why `ForceJacobian` doesn't carry a `∂f/∂u` field
+## Integration and assembly are separate
 
-`u`'s Jacobian is a structural fact of the integrator (`dt·M⁻¹`, always),
-not a property of the force law, so it's computed directly in
-`step_body_jacobian` rather than asked of `gravity_force_jacobian`.
-Asking every force law to hand back `∂f/∂u = Id` would just be restating
-the same constant everywhere for no benefit.
+`integrate_body` / `integrate_body_jacobian` are the integrator proper.
+They take a force (or a `ForceJacobian`) that somebody else summed, and
+know nothing about contact — no polygons, no half-planes, no stiffness.
+`step_body` / `step_system` sit on top and do the summing.
+
+Two things forced that split, and neither is aesthetic.
+
+**Body-body contact does not decompose per body.** A contact between two
+bodies puts `+Jᵀλ` on one and `−Jᵀλ` on the other. There is no such thing
+as "body `i`'s contact force" computed from body `i` alone, so any
+function that steps one body while computing its own contact force stops
+being expressible. Contact has to be assembled over the system first.
+Against static scenery this doesn't bite — the plane has no state — which
+is exactly why the earlier shape worked and why it stops working later.
+
+**The Jacobian never depended on the state.** `integrate_body_jacobian`
+takes `(params, force_jacobian, dt)` and no state at all. Everything below
+uses only the mass matrix, the timestep, and the force law's derivatives.
+That was already true when the signature claimed otherwise; the split
+makes the type say it.
+
+The assembly layer is deliberately thin, stateless, and not an API
+promise. It exists so the common path is a single call that cannot
+evaluate the force and its Jacobian at different states, which is the one
+hazard the split introduces — a caller holding a force fixed across
+several steps would get a silently wrong trajectory, and the types cannot
+stop them.
+
+## Why `ForceJacobian` doesn't carry a `∂f/∂u` field, and why the integrator never sees `u`
+
+`u` enters every force law additively, so `∂f/∂u = Id` unconditionally.
+That makes `∂z_{t+1}/∂u` and `∂z_{t+1}/∂f` **the same matrix**, not merely
+equal in value — which is why `integrate_body_jacobian` can omit `u`
+entirely and return a single `dz_df`. Asking every force law to hand back
+`∂f/∂u = Id` would restate the same constant everywhere for no benefit;
+asking the integrator to accept a `u` it structurally cannot use was the
+same mistake one level up.
+
+Consumers wanting a control Jacobian read `dz_df` directly. The
+finite-difference test perturbs `u` and compares against `dz_df`, so the
+identity is checked rather than assumed.
 
 ## Finite-difference validation methodology
 
@@ -133,3 +169,13 @@ non-vacuous for the first time. Step 5b's damper breaks it by an exactly
 computable amount — `det(dz_dz) = det(Id − dt·b·Delassus)` over the
 contacts carrying force, strictly less than 1, since dissipation
 contracts phase-space volume. Both derived in `penalty_contact.md`.
+
+Once `integrate_body_jacobian` takes a `ForceJacobian` rather than a
+state, this stops being a claim checked at whatever operating points a
+force law happens to visit and becomes one checked directly. The tests
+feed arbitrary matrices: `∂f/∂q` symmetric, `∂f/∂q` deliberately
+asymmetric (the cancellation never needed it to be a Hessian), and
+`∂f/∂v` both dissipative and not. That is the algebra asserted as
+algebra, including the part saying `∂f/∂q` has no say at all — which no
+physical force law can exercise on its own, because every one of them
+couples the two blocks in some particular way.

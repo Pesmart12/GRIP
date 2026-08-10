@@ -2,6 +2,7 @@ include(GoogleTest)
 
 add_executable(grip_unit_tests
   unit/test_contact_detection.cpp
+  unit/test_forces.cpp
   unit/test_integrator.cpp
   unit/test_integrator_system.cpp
   unit/test_mass.cpp

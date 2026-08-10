@@ -298,7 +298,7 @@ TEST(PenaltyJacobians, DampedStepContractsPhaseSpaceVolumeByTheDelassusOperator)
     const Eigen::MatrixXd contraction = Eigen::MatrixXd::Identity(delassus.rows(), delassus.cols()) - dt * penalty.damping * delassus;
     const double expected = contraction.determinant();
 
-    const StepJacobians jac = step_body_jacobian(state, params, shape, ground, penalty, Eigen::Vector3d::Zero(), dt, kDefaultGravity);
+    const StepJacobians jac = step_body_jacobian(state, params, shape, ground, penalty, dt, kDefaultGravity);
 
     EXPECT_NEAR(jac.dz_dz.determinant(), expected, 1.0e-14) << "configuration " << q.transpose();
     // Dissipation contracts phase-space volume -- strictly, not just
@@ -338,7 +338,7 @@ TEST(PenaltyJacobians, ContactStepStillPreservesPhaseSpaceVolume) {
     state.q = q;
     state.v = Eigen::Vector3d(0.7, -1.2, 0.4);
 
-    const StepJacobians jac = step_body_jacobian(state, params, shape, ground, penalty, Eigen::Vector3d::Zero(), dt, kDefaultGravity);
+    const StepJacobians jac = step_body_jacobian(state, params, shape, ground, penalty, dt, kDefaultGravity);
 
     // Contact must actually be active, or this reduces to the free-flight
     // case the step 2 test already covers.
