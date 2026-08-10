@@ -4,52 +4,123 @@
 
 GRIP is a 2D differentiable rigid-body contact simulator written in C++20.
 
-The technical question behind it: *how trustworthy are gradients through a
-contact solver, and how does the choice of contact formulation affect them?*
-That question is why the simulator is hand-built rather than pulled off the
-shelf — the knobs that matter live inside the contact model, and mainstream
-engines don't expose them consistently enough to compare.
+It is a **library, not an application**. Control algorithms — MPC, iLQR,
+RL training loops, policies, reward functions, task definitions — live in
+*separate repositories* that link against GRIP and call it. Nothing in
+that list gets built here. What gets built here is the physics, its
+derivatives, and the API those are reached through.
 
-That question is a destination, not a requirement for the next few months.
-**Build the simulator.** No ontologies, no hypotheses, no publication
-strategy in this repo.
+That split decides a lot of borderline questions. If a consumer repo
+could reasonably implement it, it probably doesn't belong here. If it
+requires knowing how the physics works, it does.
+
+There is a longer-term technical question behind the project: *how
+trustworthy are gradients through a contact solver, and how does the
+choice of contact formulation affect them?* That is a destination,
+possibly a thesis, and explicitly **not** what the next stretch of work
+is about. It is recorded here so the architecture doesn't accidentally
+foreclose it — not as a requirement. No ontologies, no hypotheses, no
+publication strategy in this repo.
 
 ## How we work
 
-Claude writes code, including core physics, dynamics, contact, and gradient
-implementation. Move fast.
+Claude writes code, including core physics, dynamics, contact, and
+gradient implementation. Move fast.
 
 Two things Claude owes on every non-trivial physics change:
 
 - **Explain what it wrote** — the derivation, the convention choices, why
-  this formulation and not another. A short paragraph in the response, not a
-  lecture. Anything longer than a paragraph goes in `docs/derivations/`.
+  this formulation and not another. A short paragraph in the response, not
+  a lecture. Anything longer than a paragraph goes in `docs/derivations/`.
 - **Flag the choices that were judgment calls**, so they don't silently
   harden into assumptions nobody remembers making.
 
-Pedro reviews, redirects, and makes the calls. If a design decision has real
-tradeoffs, surface them and ask rather than picking silently.
+Pedro reviews, redirects, and makes the calls. If a design decision has
+real tradeoffs, surface them and ask rather than picking silently.
+
+This file is **guidelines, not scripture**. It records decisions that were
+made deliberately, so they aren't re-litigated by accident — but it is
+wrong sometimes, and the build order in particular has already been
+rewritten once. If following it would produce something worse, say so.
+
+## What is already built
+
+Steps 1–5, complete and green:
+
+1. **Symplectic (semi-implicit) Euler integrator** for a single 2D rigid
+   body under gravity.
+2. **Analytic dynamics Jacobians** `∂z_{t+1}/∂z_t` and `∂z_{t+1}/∂u`,
+   validated against central finite differences.
+3. **Multiple bodies**, parallel vectors, block-diagonal system Jacobian.
+4. **Contact detection** — convex polygon against a static half-plane.
+   Signed distance, contact normal, contact point, and the analytic
+   contact Jacobian `J = ∂d/∂q`.
+5. **Penalty contact** — clamped Kelvin–Voigt spring-damper, with its
+   force Jacobian and the determinant identity
+   `det(dz_dz) = det(Id + dt·M⁻¹·∂f/∂v)`.
+
+So: a frictionless, single-plane, multi-body differentiable simulator
+with per-step gradients. Bodies fall, bounce, tip, and settle, and every
+derivative is analytic and finite-difference validated.
+
+Known gaps, in the order they matter: no rollout gradients, no friction,
+no body-body contact, no callable API beyond the C++ headers.
 
 ## Build order
 
-Work in this order. Each step tested and green before the next begins.
+Each step tested and green before the next begins.
 
-1. **Symplectic (semi-implicit) Euler integrator** for a single 2D rigid
-   body under gravity. No contact.
-2. **Analytic dynamics Jacobians** ∂x_{t+1}/∂x_t and ∂x_{t+1}/∂u,
-   validated against central finite differences.
-3. **Multiple bodies**, still unconstrained.
-4. **Contact detection** — single body against a static half-plane. Signed
-   distance, contact normal, contact point.
-5. **Penalty contact** (spring-damper). Simple, differentiates trivially,
-   and a real baseline worth keeping permanently.
-6. **Velocity-level NCP contact solver.** The hard part. Take it after
-   penalty contact works end to end.
-7. **IFT gradients through the contact solve**, in the style of Dojo.
-8. **Formulation swapping** — change the contact model with everything else
-   held fixed.
+6. **Separate contact from the force law.** The integrator should take
+   net *external* force and expose a clean seam where contact resolution
+   happens. Today penalty contact is welded into `f(q, v, u)`, which
+   works only because penalty contact *is* a force. Doing this now costs
+   ~19 call sites on a green suite; doing it after a control stack exists
+   costs much more.
+7. **Rollout gradients.** Compose the per-step `dz_dz` / `dz_du` over a
+   trajectory with an adjoint sweep, so `∂(terminal quantity)/∂(inputs)`
+   is available without O(T²) cost. This is the single largest gap: both
+   gradient-based MPC and first-order RL need it, and no consumer repo
+   can supply it.
+8. **Coulomb friction**, in the penalty formulation. A tangential force
+   along `n^⊥` with a magnitude clamped to `μλ`. Widens the task set
+   enormously — without it nothing can be pushed, dragged, or grasped.
+9. **Body-body contact.** Polygon-polygon detection, then the same
+   penalty response. This is the first thing that couples bodies, so it
+   is also the first thing that breaks the block-diagonal system
+   Jacobian.
+10. **Public API and Python bindings.** pybind11. Deliberately last: the
+    surface should stop moving before it gets bound, and steps 8–9 both
+    change scene construction.
 
-Steps 1–3 are the first milestone. Don't scope past them until they're done.
+Steps 6–7 are the current milestone. Don't scope past them until they're
+done.
+
+## Deferred: NCP, IFT gradients, formulation swapping
+
+These were steps 6–8 of the original plan. They are **future ideas, not
+current work**, and nothing should be built in anticipation of them:
+
+- **Velocity-level NCP contact solver.** Contact as a complementarity
+  constraint solved per step rather than a force — exact non-penetration
+  instead of penalty's sub-millimetre sink.
+- **IFT gradients through the contact solve**, in the style of Dojo.
+  Required because you cannot chain-rule through a solver; this is what
+  would make an NCP formulation differentiable at all.
+- **Formulation swapping** — running the same scenario through penalty
+  and through NCP.
+
+Why deferred: the eventual comparison is only measurable once there is a
+control/RL stack to measure it *with*. Building a second formulation
+first produces something with nothing to compare on. Note also that
+penalty and NCP are different **update rules**, not interchangeable force
+laws — penalty is a force, NCP is a post-force projection — so
+"swapping" was never going to be a plug-in interface, and no abstraction
+should be built pretending otherwise.
+
+What keeps the door open is step 6's seam, not any amount of generality.
+Revisit when a consumer repo can actually train something and the
+question "does the contact model change what it learns" becomes a
+measurement rather than a guess.
 
 ## Architecture
 
@@ -67,29 +138,31 @@ Settled unless explicitly reopened:
   treats state as a point in `Rⁿ` use it. `Pack`/`Unpack` in
   `core/rigid_body.hpp` are the only conversion boundary and the single
   source of truth for the stacking order. Don't collapse these into one
-  representation; each direction (struct-only or vector-only) has a real
-  cost — see `docs/derivations/integrator_jacobians.md`.
+  representation; each direction has a real cost — see
+  `docs/derivations/integrator_jacobians.md`.
 - **Multiple bodies are parallel vectors, not a bundled struct.**
-  `std::vector<RigidBodyState>` + `std::vector<RigidBodyParams>`,
-  indexed together — the same state/params split as the single-body
-  case, applied at the collection level. System state is
-  `PackSystem`/`UnpackSystem`'s concatenation (body `i` at
-  `[6i, 6i+6)`), built on the single-body `Pack`/`Unpack` convention
-  above.
-- **The system Jacobian is built alongside every step, not deferred
-  until contact needs it.** It's exactly block-diagonal today, since
-  bodies don't couple yet — each diagonal block is just the per-body
-  Jacobian. Building it now doesn't create rework later: step 4
-  (detection) doesn't touch it, step 5's per-body contact force only
-  enriches a diagonal block through the existing `ForceJacobian` hook,
-  and real body-body coupling (steps 6–7) goes through the IFT gradient
-  path — a different computation, not an extension of this assembly.
-  See `docs/derivations/multi_body_system.md`.
-- **Strictly deterministic.** Same input, same binary, same output, bit for
-  bit. No unordered container iteration, no unstable sorts, no
+  `std::vector<RigidBodyState>` + `std::vector<RigidBodyParams>` +
+  `std::vector<BodyShape>`, indexed together. System state is
+  `PackSystem`/`UnpackSystem`'s concatenation (body `i` at `[6i, 6i+6)`),
+  built on the single-body convention above.
+- **The system Jacobian is built alongside every step, not deferred.**
+  It is exactly block-diagonal while bodies only touch static scenery —
+  each diagonal block is the per-body Jacobian, and penalty contact
+  against the plane only enriched those blocks. Body-body contact (step
+  9) is the first thing that introduces genuine off-diagonal terms. See
+  `docs/derivations/multi_body_system.md`.
+- **Strictly deterministic.** Same input, same binary, same output, bit
+  for bit. No unordered container iteration, no unstable sorts, no
   order-dependent floating-point accumulation, no uninitialized memory.
 - **The rollout path and the gradient path share one physics
-  implementation.** Never let them diverge.
+  implementation.** Never let them diverge. This is why force laws
+  compute their own inputs rather than taking precomputed ones, and why
+  every analytic derivative is finite-difference checked against the
+  actual forward function.
+- **The public surface is for consumers.** Assume another repository is
+  calling this one. Prefer explicit arguments over ambient state, keep
+  scene construction data-driven, and don't require a caller to
+  understand the integrator's internals to run a rollout.
 
 New dependencies beyond Eigen, GoogleTest, and (later) pybind11 need
 discussion first.
@@ -109,6 +182,11 @@ patterns when editing.
   `step_system` (and `step_body_jacobian` / `step_system_jacobian`)
   rather than one overloaded name per pair. When a function gains a
   "same thing, but for N of them" variant, name it; don't overload it.
+- **Two blank lines between top-level definitions in `src/`** — functions,
+  structs, `using` declarations. One blank line before and after
+  `}  // namespace`. Test files use a single blank line between `TEST`
+  blocks. Never "clean up" extra blank lines between functions; they are
+  deliberate.
 
 ## Repository layout
 
@@ -117,8 +195,8 @@ grip/
   src/
     core/        types, math helpers, rigid body state
     dynamics/    mass matrices, forces, integrator
-    contact/     detection, formulations, solver
-    gradient/    adjoint / IFT path
+    contact/     detection, formulations
+    gradient/    rollout / adjoint path
   tests/
     unit/        per-component tests
     validation/  finite-difference and conservation checks
@@ -128,6 +206,8 @@ grip/
   CMakeLists.txt
 ```
 
+`bindings/` arrives with step 10.
+
 ## Testing
 
 - Every derivative gets a finite-difference test against its analytic
@@ -135,10 +215,19 @@ grip/
 - Energy-behavior tests for the integrator: symplectic Euler should show
   bounded energy oscillation, not secular drift. That test is worth more
   than a single-step tolerance check.
-- Near contact activation boundaries, gradients are *expected* to misbehave.
-  Tests there record and characterize the behavior rather than enforce a
-  tolerance. That boundary is the interesting part, not a bug.
+- Structural invariants earn their keep over time. `det(dz_dz) = 1` for
+  conservative forces was written at step 2 while it was nearly vacuous,
+  gained teeth at step 5a with a nonzero `∂f/∂q`, and broke exactly as
+  predicted at 5b. Prefer assertions about structure to assertions about
+  numbers where both are available.
+- Near contact activation boundaries, gradients are *expected* to
+  misbehave. Tests there record and characterize the behavior rather
+  than enforce a tolerance. That boundary is the interesting part, not a
+  bug.
 - **Never weaken a tolerance to make a test pass.** Investigate instead.
+  If a tolerance was wrong, say why it was wrong — an unjustified
+  guess about floating-point behavior is a reason; "it fails otherwise"
+  is not.
 
 ## Notation
 
@@ -148,7 +237,11 @@ quantity in a derivation, add it there and check it against what's
 already taken — several collisions (`J` as both a rotation and a
 Jacobian, `x` as both a coordinate and the stacked state, `I` as both
 inertia and identity) had to be untangled after the fact, which is
-exactly what that file exists to prevent.
+exactly what that file exists to prevent. Case is not enough separation:
+`N`/`n`, `G`/`g` and `F`/`f` all count as collisions.
+
+When every short candidate collides, spell the name out — `Delassus`,
+`eig_max` — rather than inventing a letter.
 
 Math notation belongs in `docs/derivations/`. Code uses descriptive
 identifiers — `signed_distance`, not `d`. The Jacobian member names
@@ -158,12 +251,14 @@ math is clearer than prose.
 ## Derivations
 
 Non-trivial math — integrator update, mass matrix construction, contact
-formulations, the IFT gradient derivation, frame conventions — lives in
+formulations, frame conventions, the adjoint derivation — lives in
 `docs/derivations/` as Markdown with LaTeX. Claude writes these as it
-implements. Code comments reference the derivation rather than re-deriving
-inline.
+implements. Code comments reference the derivation rather than
+re-deriving inline.
 
-If code and derivation disagree, flag it. Don't silently pick one.
+If code and derivation disagree, flag it. Don't silently pick one. If a
+derivation cites numbers, they must come from something that still runs
+in the repo.
 
 ## Things to do proactively
 
@@ -173,19 +268,24 @@ If code and derivation disagree, flag it. Don't silently pick one.
 - Suggest missing edge-case tests, especially near contact activation.
 - Keep CMake tidy; new source files get wired into the build and a test
   target in the same change.
-- Say when something is out of scope for the current build step.
+- Say when something is out of scope for the current build step, or
+  belongs in a consumer repository rather than here.
 
 ## Things not to do
 
 - Add abstraction layers, plugin systems, or generality no current test
   needs. Elegance that doesn't unlock a measurement is wasted effort.
+- Build toward the deferred NCP work. The seam in step 6 is the whole
+  hedge; nothing else should be shaped by a formulation that doesn't
+  exist.
 - Optimize before a benchmark shows it matters.
+- Implement control algorithms, policies, or training loops here.
 - Reintroduce research framing into the codebase or its docs.
 - Commit commented-out code or TODO placeholders in reviewed paths.
-- Build three steps ahead of where the build order is.
 
 ## Standing reminder
 
-If a session drifts toward architecture astronomy, research positioning, or
-features that aren't the next numbered step, say so and point back to the
-build order. Right now that step is small.
+If a session drifts toward architecture astronomy, research positioning,
+or features that aren't the next numbered step, say so and point back to
+the build order. Right now that step is 6: get contact out of the force
+law, on a green suite, before anything is built on top of it.
