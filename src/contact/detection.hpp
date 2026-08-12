@@ -39,4 +39,27 @@ std::vector<Contact> detect_contacts_body(const RigidBodyState& state, const Bod
 // contact, matching detect_contacts_body's output size.
 std::vector<Eigen::RowVector3d> detect_contacts_body_jacobian(const RigidBodyState& state, const BodyShape& shape, const HalfPlane& plane);
 
+
+// The same row, one direction over: the contact's sensitivity along
+// n^perp rather than along n. Same vertex order and same size.
+//
+//   J_perp,i = [(n^perp)_x, (n^perp)_y, n^perp . (p_i - c)^perp]
+//
+// Unlike J_i this is NOT the gradient of anything. There is no
+// tangential gap to differentiate -- without a stick anchor, sliding has
+// no accumulated position. What it is instead is the map from
+// generalized velocity to slip speed,
+//
+//   s_i = J_perp,i . v
+//
+// which expands to n^perp . (v_xy + omega * (p_i - c)^perp): the world
+// velocity of the contact point, projected onto the surface. Zero means
+// sticking; nonzero means sliding, and friction opposes it.
+//
+// Sign convention: n^perp = (-n_y, n_x), so for the default ground plane
+// n = (0, 1) it points in -x, and a body sliding in +x has NEGATIVE slip.
+// Self-consistent, but it reads backwards -- see
+// docs/derivations/penalty_contact.md.
+std::vector<Eigen::RowVector3d> detect_contacts_body_perp_jacobian(const RigidBodyState& state, const BodyShape& shape, const HalfPlane& plane);
+
 }  // namespace grip

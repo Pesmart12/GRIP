@@ -18,11 +18,26 @@ namespace grip {
 // Zero stiffness means no contact response. That's a consistent
 // degenerate case rather than a sentinel -- a body with no contact
 // stiffness passes through the plane. Zero damping recovers the
-// undamped spring exactly, which is what every step 5a test still
-// exercises.
+// undamped spring exactly, and zero slip_damping recovers the
+// frictionless case, so each addition is a no-op at its default.
+//
+// slip_damping (b_slip in the derivations) resists sliding along the
+// surface, in the same units as damping. friction is Coulomb's mu, and
+// bounds that resistance by mu * lambda -- the friction cone. Its
+// half-angle atan(mu) is the steepest slope a body rests on, so
+// mu = 0.5 holds up to 26.6 degrees.
+//
+// mu = 0 is frictionless regardless of slip_damping: the cone collapses
+// to a line and no tangential force can be produced. That is the
+// physically right meaning, and it is why every step 1-7 test still
+// passes untouched.
+//
+// See docs/derivations/penalty_contact.md.
 struct PenaltyParams {
   double stiffness = 0.0;
   double damping = 0.0;
+  double slip_damping = 0.0;
+  double friction = 0.0;
 };
 
 
@@ -43,18 +58,33 @@ struct PenaltyParams {
 // characterized in tests/validation/test_contact_boundary.cpp rather
 // than papered over.
 //
+// Alongside it, a tangential force resisting slip:
+//
+//   beta_i = -b_slip * s_i,        s_i = J_perp,i . v
+//
+// applied only where the normal force is nonzero -- no contact, no
+// friction -- so it switches on and off with lambda rather than on its
+// own. The full contact force is then
+//
+//   f_c = sum_i [ J_i^T lambda_i + J_perp,i^T beta_i ]
+//
 // The result is a single wrench (fx, fy, tau) at the center of mass no
 // matter how many vertices are penetrating -- J_i^T carries each scalar
-// normal force to both a force and a moment about the COM, so the
-// moment arm never has to be handled separately. See
+// force to both a force and a moment about the COM, so the moment arm
+// never has to be handled separately. See
 // docs/derivations/penalty_contact.md.
 Eigen::Vector3d penalty_force_body(const RigidBodyState& state, const BodyShape& shape, const HalfPlane& plane, const PenaltyParams& penalty);
 
 
 // df_c/dq and df_c/dv for the force above.
 //
-// df_c/dv = -b * sum_i J_i^T J_i, symmetric and negative semidefinite:
-// the damper can only remove energy, never add it.
+// df_c/dv = -b * sum_i J_i^T J_i - b_slip * sum_i J_perp,i^T J_perp,i,
+// symmetric and negative semidefinite: neither damper can add energy.
+// Stacking both directions makes this -A^T diag(b, b_slip) A with A the
+// normal and perp rows together, so the determinant identity picks up a
+// Delassus operator over both directions rather than just the normal
+// one. The Coulomb cone will break this symmetry; it holds while the
+// tangential force is unbounded.
 //
 // df_c/dq splits into three pieces. A material term -k * sum J_i^T J_i;
 // a geometric term from the moment arm rotating under fixed force,

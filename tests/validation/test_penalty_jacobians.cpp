@@ -1,8 +1,11 @@
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <vector>
 
+#include <Eigen/Eigenvalues>
 #include <Eigen/LU>
 #include <gtest/gtest.h>
 
@@ -41,6 +44,30 @@ Eigen::Matrix3d FiniteDifferenceVelocityJacobian(const RigidBodyState& state, co
     return penalty_force_body(perturbed, shape, plane, penalty);
   };
   return testutil::CentralDifferenceJacobian<3, 3>(force_of_v, state.v);
+}
+
+// Contacts must also be clear of the friction cone, for the same reason:
+// straddling |b_slip*s| = mu*lambda measures the boundary, not the
+// gradient. Returns the smallest relative margin so a test can assert
+// which side of the cone it is exercising.
+double SmallestConeMargin(const RigidBodyState& state, const BodyShape& shape, const HalfPlane& plane, const PenaltyParams& penalty) {
+  const std::vector<Contact> contacts = detect_contacts_body(state, shape, plane);
+  const std::vector<Eigen::RowVector3d> jacobians = detect_contacts_body_jacobian(state, shape, plane);
+  const std::vector<Eigen::RowVector3d> perp = detect_contacts_body_perp_jacobian(state, shape, plane);
+
+  double smallest = std::numeric_limits<double>::max();
+  for (std::size_t i = 0; i < contacts.size(); ++i) {
+    if (contacts[i].signed_distance >= 0.0) {
+      continue;
+    }
+    const double normal_force = -penalty.stiffness * contacts[i].signed_distance - penalty.damping * jacobians[i].dot(state.v);
+    if (normal_force <= 0.0) {
+      continue;
+    }
+    const double demand = std::abs(penalty.slip_damping * perp[i].dot(state.v));
+    smallest = std::min(smallest, penalty.friction * normal_force - demand);
+  }
+  return smallest;
 }
 
 // Every contact must be clear of d = 0 by far more than the FD step, or
@@ -346,6 +373,208 @@ TEST(PenaltyJacobians, ContactStepStillPreservesPhaseSpaceVolume) {
     ASSERT_FALSE(force_jac.df_dq.isZero(0.0)) << "configuration " << q.transpose() << " is not in contact";
 
     EXPECT_NEAR(jac.dz_dz.determinant(), 1.0, 1.0e-14) << "configuration " << q.transpose();
+  }
+}
+
+TEST(PenaltyJacobians, MatchCentralFiniteDifferenceWithSlipDamping) {
+  // Sliding and spinning while pressed in, so the tangential force
+  // depends on q through two paths -- J_perp,i itself rotating, and the
+  // slip rate J_perp,i(q).v changing with it -- exactly mirroring the
+  // normal damper.
+  RigidBodyState state;
+  state.q = Eigen::Vector3d(0.0, 0.2, 0.3);
+  state.v = Eigen::Vector3d(1.6, -1.4, 0.8);
+  const BodyShape shape = UnitSquare();
+  const HalfPlane ground;
+  const PenaltyParams penalty{/*stiffness=*/100.0, /*damping=*/12.0, /*slip_damping=*/8.0, /*friction=*/5.0};
+
+  ExpectClearOfBoundary(state, shape, ground, 1.0e-3);
+  ASSERT_GT(SmallestConeMargin(state, shape, ground, penalty), 1.0) << "this test exercises the sticking branch";
+
+  const ForceJacobian analytic = penalty_force_body_jacobian(state, shape, ground, penalty);
+  const Eigen::Matrix3d fd_dq = FiniteDifferenceForceJacobian(state, shape, ground, penalty);
+  const Eigen::Matrix3d fd_dv = FiniteDifferenceVelocityJacobian(state, shape, ground, penalty);
+
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      EXPECT_NEAR(analytic.df_dq(i, j), fd_dq(i, j), 1.0e-6) << "df_dq mismatch at (" << i << ", " << j << ")";
+      EXPECT_NEAR(analytic.df_dv(i, j), fd_dv(i, j), 1.0e-6) << "df_dv mismatch at (" << i << ", " << j << ")";
+    }
+  }
+}
+
+TEST(PenaltyJacobians, StickingFrictionKeepsTheVelocityBlockSymmetricNegativeSemidefinite) {
+  // Unbounded tangential damping contributes -b_slip * sum J_perp^T
+  // J_perp, which is the same shape as the normal damper's term. Stacked,
+  // df_c/dv = -A^T diag(b, b_slip) A, symmetric and negative
+  // semidefinite in both directions at once.
+  //
+  // This is the claim the Coulomb cone will destroy: once the tangential
+  // force saturates at mu*lambda its sensitivity comes from the NORMAL
+  // force instead, contributing an outer product of two different
+  // vectors. Isolated here first, deliberately.
+  RigidBodyState state;
+  state.q = Eigen::Vector3d(0.0, 0.2, 0.3);
+  state.v = Eigen::Vector3d(1.6, -1.4, 0.8);
+
+  const PenaltyParams penalty{/*stiffness=*/100.0, /*damping=*/12.0, /*slip_damping=*/8.0, /*friction=*/5.0};
+  ASSERT_GT(SmallestConeMargin(state, UnitSquare(), HalfPlane{}, penalty), 1.0) << "this test exercises the sticking branch";
+
+  const ForceJacobian analytic = penalty_force_body_jacobian(state, UnitSquare(), HalfPlane{}, penalty);
+  const Eigen::Matrix3d df_dv = analytic.df_dv;
+
+  EXPECT_DOUBLE_EQ(df_dv(0, 1), df_dv(1, 0));
+  EXPECT_DOUBLE_EQ(df_dv(0, 2), df_dv(2, 0));
+  EXPECT_DOUBLE_EQ(df_dv(1, 2), df_dv(2, 1));
+
+  for (const Eigen::Vector3d& w : {Eigen::Vector3d(1.0, 0.0, 0.0), Eigen::Vector3d(0.0, 1.0, 0.0), Eigen::Vector3d(0.0, 0.0, 1.0), Eigen::Vector3d(0.7, -1.3, 2.2), state.v}) {
+    EXPECT_LE(w.transpose() * df_dv * w, 0.0) << "w = " << w.transpose();
+  }
+
+  // The x row is nonzero only because of slip damping -- the normal
+  // direction alone cannot resist horizontal motion on a flat floor.
+  EXPECT_LT(df_dv(0, 0), 0.0);
+}
+
+TEST(PenaltyJacobians, MatchCentralFiniteDifferenceWhileSliding) {
+  // The saturated branch, where beta is pinned to -mu*lambda and its
+  // entire state dependence runs through the NORMAL force instead of
+  // through slip. Structurally different derivatives, so it needs its own
+  // finite-difference check rather than being covered by the sticking one.
+  RigidBodyState state;
+  state.q = Eigen::Vector3d(0.0, 0.2, 0.3);
+  state.v = Eigen::Vector3d(10.0, -1.4, 0.8);
+  const BodyShape shape = UnitSquare();
+  const HalfPlane ground;
+  const PenaltyParams penalty{/*stiffness=*/100.0, /*damping=*/12.0, /*slip_damping=*/8.0, /*friction=*/0.5};
+
+  ExpectClearOfBoundary(state, shape, ground, 1.0e-3);
+  ASSERT_LT(SmallestConeMargin(state, shape, ground, penalty), -1.0) << "this test exercises the sliding branch";
+
+  const ForceJacobian analytic = penalty_force_body_jacobian(state, shape, ground, penalty);
+  const Eigen::Matrix3d fd_dq = FiniteDifferenceForceJacobian(state, shape, ground, penalty);
+  const Eigen::Matrix3d fd_dv = FiniteDifferenceVelocityJacobian(state, shape, ground, penalty);
+
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      EXPECT_NEAR(analytic.df_dq(i, j), fd_dq(i, j), 1.0e-6) << "df_dq mismatch at (" << i << ", " << j << ")";
+      EXPECT_NEAR(analytic.df_dv(i, j), fd_dv(i, j), 1.0e-6) << "df_dv mismatch at (" << i << ", " << j << ")";
+    }
+  }
+}
+
+TEST(PenaltyJacobians, SlidingFrictionBreaksVelocityBlockSymmetry) {
+  // The claim 8a existed to isolate, now destroyed. While sticking,
+  // df_c/dv = -A^T diag(b, b_slip) A and is symmetric negative
+  // semidefinite. While sliding, beta = -sigma*mu*lambda contributes
+  // J_perp^T (sigma*mu*b*J) -- an outer product of the perp row with the
+  // NORMAL row, two vectors that are neither parallel nor even in the
+  // same direction. Symmetry goes, and so does the -A^T D A form the
+  // generalized Delassus determinant relied on.
+  //
+  // Dissipation survives: that is a property of the force, not of this
+  // block, and test_penalty_force.cpp asserts it in both regimes.
+  RigidBodyState state;
+  state.q = Eigen::Vector3d(0.0, 0.2, 0.3);
+  state.v = Eigen::Vector3d(10.0, -1.4, 0.8);
+  const BodyShape shape = UnitSquare();
+  const HalfPlane ground;
+
+  const PenaltyParams sliding{/*stiffness=*/100.0, /*damping=*/12.0, /*slip_damping=*/8.0, /*friction=*/0.5};
+  const PenaltyParams sticking{/*stiffness=*/100.0, /*damping=*/12.0, /*slip_damping=*/8.0, /*friction=*/5.0};
+  ASSERT_LT(SmallestConeMargin(state, shape, ground, sliding), -1.0);
+  ASSERT_GT(SmallestConeMargin(state, shape, ground, sticking), 1.0);
+
+  const Eigen::Matrix3d slid = penalty_force_body_jacobian(state, shape, ground, sliding).df_dv;
+  const Eigen::Matrix3d stuck = penalty_force_body_jacobian(state, shape, ground, sticking).df_dv;
+
+  EXPECT_FALSE(slid.isApprox(slid.transpose(), 1.0e-12)) << "sliding friction should break symmetry";
+  EXPECT_TRUE(stuck.isApprox(stuck.transpose(), 1.0e-12)) << "the same operating point sticks symmetrically";
+
+  // And it is no longer negative semidefinite either. Per contact the
+  // quadratic form in (a, c) = (J.w, J_perp.w) is
+  //
+  //   -b*a^2 + sigma*mu*b*a*c
+  //
+  // whose matrix b*[[-1, mu/2], [mu/2, 0]] has determinant -b^2*mu^2/4,
+  // negative for any mu > 0. Indefinite by construction, not by accident
+  // of this operating point -- so the check is on the eigenvalues of the
+  // symmetric part rather than on a handful of guessed directions.
+  const Eigen::Matrix3d symmetric_part = 0.5 * (slid + slid.transpose());
+  const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(symmetric_part);
+  EXPECT_GT(solver.eigenvalues().maxCoeff(), 0.0) << "sliding should cost negative semidefiniteness, not just symmetry";
+
+  // The sticking block, by contrast, is negative semidefinite outright.
+  const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> stuck_solver(stuck);
+  EXPECT_LE(stuck_solver.eigenvalues().maxCoeff(), 0.0);
+}
+
+TEST(PenaltyJacobians, DampedStepContractsByTheGeneralizedDelassus) {
+  // The 5b identity, one direction wider. With
+  //
+  //   df_c/dv = -A^T diag(b, b_slip) A,     A = [J ; J_perp] stacked
+  //
+  // Sylvester turns det(dz_dz) = det(Id + dt*M^-1*df/dv) into
+  //
+  //   det(Id - dt * (A M^-1 A^T) * D)
+  //
+  // where A M^-1 A^T is the Delassus operator over BOTH directions
+  // rather than the normal one alone. Assembled here from detection
+  // output and the mass matrix, independently of the integrator.
+  const RigidBodyParams params{/*mass=*/1.0, /*inertia=*/1.0 / 6.0};
+  const BodyShape shape = UnitSquare();
+  const HalfPlane ground;
+  // mu deliberately absurd: this test is about the algebra of the
+  // unsaturated branch, and a physical friction coefficient would put
+  // some of these configurations on the cone.
+  const PenaltyParams penalty{/*stiffness=*/100.0, /*damping=*/50.0, /*slip_damping=*/30.0, /*friction=*/50.0};
+  const double dt = 1.0e-3;
+
+  const std::vector<Eigen::Vector3d> configurations = {
+      Eigen::Vector3d(0.0, 0.45, 0.0),
+      Eigen::Vector3d(0.0, 0.50, 0.3),
+      Eigen::Vector3d(0.4, 0.30, -0.9),
+  };
+
+  for (const Eigen::Vector3d& q : configurations) {
+    RigidBodyState state;
+    state.q = q;
+    state.v = Eigen::Vector3d(0.9, -1.0, 0.3);
+    ASSERT_GT(SmallestConeMargin(state, shape, ground, penalty), 1.0) << "configuration " << q.transpose() << " is on the cone";
+
+    const std::vector<Contact> contacts = detect_contacts_body(state, shape, ground);
+    const std::vector<Eigen::RowVector3d> jacobians = detect_contacts_body_jacobian(state, shape, ground);
+    const std::vector<Eigen::RowVector3d> perp = detect_contacts_body_perp_jacobian(state, shape, ground);
+
+    std::vector<Eigen::RowVector3d> rows;
+    std::vector<double> coefficients;
+    for (std::size_t i = 0; i < contacts.size(); ++i) {
+      const double closing_rate = jacobians[i].dot(state.v);
+      if (contacts[i].signed_distance < 0.0 && -penalty.stiffness * contacts[i].signed_distance - penalty.damping * closing_rate > 0.0) {
+        rows.push_back(jacobians[i]);
+        coefficients.push_back(penalty.damping);
+        rows.push_back(perp[i]);
+        coefficients.push_back(penalty.slip_damping);
+      }
+    }
+    ASSERT_FALSE(rows.empty()) << "configuration " << q.transpose() << " carries no contact force";
+
+    const auto size = static_cast<Eigen::Index>(rows.size());
+    Eigen::MatrixXd stacked(size, 3);
+    Eigen::VectorXd diagonal(size);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+      stacked.row(static_cast<Eigen::Index>(i)) = rows[i];
+      diagonal(static_cast<Eigen::Index>(i)) = coefficients[i];
+    }
+
+    const Eigen::Matrix3d m_inv = inverse_mass_diagonal(params).asDiagonal();
+    const Eigen::MatrixXd delassus = stacked * m_inv * stacked.transpose();
+    const Eigen::MatrixXd contraction = Eigen::MatrixXd::Identity(size, size) - dt * delassus * diagonal.asDiagonal();
+
+    const StepJacobians jac = step_body_jacobian(state, params, shape, ground, penalty, dt, kDefaultGravity);
+
+    EXPECT_NEAR(jac.dz_dz.determinant(), contraction.determinant(), 1.0e-14) << "configuration " << q.transpose();
+    EXPECT_LT(jac.dz_dz.determinant(), 1.0) << "configuration " << q.transpose();
   }
 }
 

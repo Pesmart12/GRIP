@@ -80,8 +80,13 @@ same way the discarded `p₀` did.
 | `dᵢ` | signed distance (gap) at vertex `i` | scalar | `Contact::signed_distance` |
 | `ḋᵢ` | closing rate, `= Jᵢ·v` | scalar | — |
 | `Jᵢ` | contact Jacobian `∂dᵢ/∂q` | 1×3 row | — |
+| `J_perp,ᵢ` | slip Jacobian, `sᵢ = J_perp,ᵢ·v` | 1×3 row | `perp_jacobian` |
+| `sᵢ` | slip rate at contact `i`, signed along `n^⊥` | scalar | — |
 | `λᵢ` | normal force magnitude at contact `i` | scalar | — |
-| `k`, `b` | contact stiffness, damping | scalars | — |
+| `βᵢ` | tangential force magnitude at contact `i`, signed | scalar | — |
+| `k`, `b` | contact stiffness, normal damping | scalars | `PenaltyParams` |
+| `b_slip` | slip damping | scalar | `PenaltyParams::slip_damping` |
+| `μ` | Coulomb friction coefficient | scalar | `PenaltyParams::friction` |
 | `U` | penalty potential, `= Σᵢ (k/2)·min(0, dᵢ)²` | scalar | — |
 | `J_A` | active contact Jacobians, stacked one row per active contact | a×3 | — |
 | `Delassus` | inverse effective mass at the contacts, `= J_A M⁻¹ J_Aᵀ` | a×a | `delassus` |
@@ -106,9 +111,25 @@ is silently scaled with it.
 
 `λ` for the normal force magnitude, not `N`: `N` differs from `n`
 (normal direction) only by case, and the two always appear together as
-`λn`. `λ` also matches the multiplier that the NCP solver will produce
-in step 6, so the same symbol carries across formulations when step 8
-compares them.
+`λn`. `β` is its tangential counterpart, and is signed rather than
+non-negative — friction pushes either way along the surface.
+
+**The tangential direction still has no symbol.** It is written `n^⊥`
+wherever it appears, per the reservation on `t`. `J_perp` needs a name
+only because it appears in every line of a derivation; `J^⊥` was
+rejected because `V^⊥` conventionally means an orthogonal complement,
+which is a real ambiguity for something that is itself a row vector.
+
+Sign convention, worth pinning because `−n^⊥` would have been equally
+defensible: `n^⊥ = (−n_y, n_x)`, so for the default ground plane
+`n = (0, 1)` the surface direction points in **−x**, and a body sliding
+in `+x` has *negative* `s`. Self-consistent, but it reads backwards, so
+`test_contact_jacobians.cpp` pins it directly rather than leaving it to
+be rediscovered.
+
+`s` is the signed *rate* along `n^⊥`; `J_perp` is the row that produces
+it from `v`. One is a speed, the other a map — they share a word only
+because both are about slip.
 
 Nothing is called `W`. "Wrench" is a useful word for a
 force-plus-torque 3-vector, but `W` is conventionally *work*, and the
@@ -172,15 +193,15 @@ a strong claim on them:
 
 | symbol | reserved for |
 |---|---|
-| `s` | slip (tangential) velocity, step 6 friction |
-| `μ` | friction coefficient, step 6 |
 | `t` | time (never a tangential direction — use `n^⊥`) |
 
-`s` is the reason the stacked state is `z` and not `s`, despite `s` being
-the more mnemonic choice for "state": friction's slip velocity has the
-better claim, and `t` and `v` are already taken by time and velocity, so
-slip has nowhere else obvious to go. The tangential direction needs no
-symbol at all — in 2D it is just `n^⊥`.
+`s` was the reason the stacked state is `z` and not `s`, despite `s`
+being the more mnemonic choice for "state": friction's slip rate had the
+better claim, and `t` and `v` were already taken by time and velocity, so
+slip had nowhere else obvious to go. It is now spent, on exactly that.
+
+The tangential direction needs no symbol at all — in 2D it is just
+`n^⊥`, written out wherever it appears.
 
 ## Code correspondence
 

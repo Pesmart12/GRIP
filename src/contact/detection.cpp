@@ -45,4 +45,21 @@ std::vector<Eigen::RowVector3d> detect_contacts_body_jacobian(const RigidBodySta
   return jacobians;
 }
 
+
+std::vector<Eigen::RowVector3d> detect_contacts_body_perp_jacobian(const RigidBodyState& state, const BodyShape& shape, const HalfPlane& plane) {
+  const Eigen::Matrix2d rotation = Eigen::Rotation2Dd(state.q.z()).toRotationMatrix();
+  const Eigen::Vector2d tangent = Perp(plane.normal);
+
+  std::vector<Eigen::RowVector3d> jacobians(shape.vertices.size());
+  for (std::size_t i = 0; i < shape.vertices.size(); ++i) {
+    // Identical construction to the normal row, with n^perp in place of
+    // n -- the perp operator appears twice for different reasons: once
+    // to turn the plane normal into the surface direction, once because
+    // a vertex's velocity under unit angular rate is (p_i - c)^perp.
+    const Eigen::Vector2d arm = rotation * shape.vertices[i];
+    jacobians[i] << tangent.x(), tangent.y(), tangent.dot(Perp(arm));
+  }
+  return jacobians;
+}
+
 }  // namespace grip

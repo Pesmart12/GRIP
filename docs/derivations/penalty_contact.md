@@ -35,6 +35,142 @@ Two gates doing two different jobs. The `dᵢ < 0` test is **activation**:
 a separated vertex feels nothing however fast it is moving. The outer
 `max` is the **adhesion clamp**, and it is not cosmetic — see below.
 
+**8a adds a tangential term**, resisting sliding rather than penetration:
+
+```
+βᵢ = −b_slip·sᵢ,     sᵢ = J_perp,ᵢ·v,     applied only where λᵢ > 0
+f_c = Σᵢ [ Jᵢᵀ λᵢ + J_perp,ᵢᵀ βᵢ ]
+```
+
+The slip Jacobian is the normal one with `n^⊥` in place of `n`:
+
+```
+Jᵢ        = [ n_x,     n_y,     n·(pᵢ−c)^⊥   ]
+J_perp,ᵢ  = [ (n^⊥)_x, (n^⊥)_y, n^⊥·(pᵢ−c)^⊥ ]
+```
+
+with one important difference in what it *is*. `Jᵢ` is `∂dᵢ/∂q`, the
+gradient of a gap. `J_perp,ᵢ` is the gradient of nothing — without a
+stick anchor there is no tangential gap to differentiate, because sliding
+accumulates no restoring position. It is purely the map from generalized
+velocity to slip speed, and expanding it says so:
+
+```
+sᵢ = n^⊥·( v_xy + ω·(pᵢ−c)^⊥ )
+```
+
+The bracket is the world velocity of contact point `i` — the body's
+translation plus what rotation contributes at that moment arm — projected
+onto the surface.
+
+Gating on `λᵢ > 0` rather than on `dᵢ < 0` means friction switches off
+with the normal force rather than a step later — including when the
+adhesion clamp zeroes `λᵢ` on a departing contact. It is also the
+condition the cone imposes anyway, so the two increments agree there.
+
+**8b bounds it with the Coulomb cone:**
+
+```
+βᵢ = −clamp( b_slip·sᵢ , −μλᵢ , +μλᵢ )
+```
+
+Step 8a alone is not friction — the force is proportional to slip with no
+bound, so a body slides down any slope however gentle and there is no
+`μ`. It shipped separately because the bound is exactly what destroys the
+velocity block's symmetry, and that structural claim was worth isolating
+before it went.
+
+## The cone
+
+Coulomb's law bounds a scalar, but the useful way to see it is as a
+constraint on the *total* contact force. The contact applies
+`λ·n + β·n^⊥`, and the admissible set is
+
+```
+{ λ·n + β·n^⊥  :  λ ≥ 0,  |β| ≤ μλ }
+```
+
+which in force space — normal up, tangential across — is a wedge with its
+apex at the contact and edges of slope `1/μ`:
+
+```
+              λ
+              ↑
+        \     |     /
+         \    |    /
+          \   |   /        admissible forces
+           \  |  /         live inside
+            \ | /
+             \|/
+    ──────────+──────────→  β
+```
+
+The half-angle is `arctan(μ)`. It is called a *cone* because of the 3D
+case: there the tangent plane is two-dimensional, the constraint becomes
+`‖β‖ ≤ μλ` on a 2-vector, and the set is a genuine circular cone.
+**In 2D it degenerates to a wedge with exactly two edges**, which is why
+this project represents friction exactly. 3D engines approximate that
+circle with a polygon and pay for it in direction-dependent artefacts.
+
+### The friction angle is a slope you can walk on
+
+`arctan(μ)` is the steepest incline a body rests on. On a slope at angle
+`θ`, gravity splits into `mg·cos θ` pressing in and `mg·sin θ` pulling
+along, so sticking needs `mg·sin θ ≤ μ·mg·cos θ`, that is `tan θ ≤ μ`.
+
+Geometrically: for the body to sit still the contact force must exactly
+oppose gravity, so it must point straight up — which is `θ` away from the
+surface normal. Equilibrium is possible precisely when that direction
+still fits inside the cone. Tilt past `arctan(μ)` and no admissible force
+can hold the body.
+
+`μ = 0.5` gives 26.6°, which is why `test_penalty_force.cpp` checks 20°
+holds and 35° runs. That test tilts *gravity* rather than the plane — a
+box on a slope in vertical gravity is the same problem as a box on flat
+ground in gravity rotated by `θ` — which avoids rotating both the plane
+and the body to match, and tests identical physics.
+
+### Interior versus boundary
+
+The two regimes are different in kind:
+
+- **Interior** (`|β| < μλ`): **sticking**, slip zero. The force is a
+  *constraint* force — whatever is needed to prevent motion, not
+  something computed from a formula.
+- **Boundary** (`|β| = μλ`): **sliding**, slip nonzero. The contact is
+  maxed out, so the magnitude is known and the direction determined:
+  opposing the slip.
+
+Either zero slip with the force free inside the cone, or nonzero slip
+with the force pinned to the boundary. Never interior-with-slip, never
+outside. That is the same disjunction as non-penetration, which is why
+exact Coulomb friction is a complementarity problem.
+
+### What penalty keeps and what it gives up
+
+The `clamp` enforces `|βᵢ| ≤ μλᵢ` **exactly**, at every state, by
+construction. What is approximated is the *stick* condition: instead of
+`sᵢ = 0`, sticking becomes `sᵢ = −βᵢ/b_slip`. Hence creep — a body held
+on a slope drifts at `mg·sin θ / b_slip` forever.
+
+That is the same bargain as the normal direction, mirrored:
+
+| | exact | approximate |
+|---|---|---|
+| normal | `λ ≥ 0` — never pulls | `d ≥ 0` — sinks by `mg/2k` |
+| tangential | `\|β\| ≤ μλ` — never exceeds the cone | `s = 0` — creeps by `β/b_slip` |
+
+In both directions penalty keeps the **force** constraint exactly and
+softens the **kinematic** one. That is the cleanest one-line statement of
+what penalty contact is.
+
+Writing the law as a saturated linear function of slip, rather than as
+`−μλ·sign(s)`, matters at zero slip. The two agree while sliding, but
+`sign()` jumps the full `2μλ` across `s = 0` — precisely the state a
+resting body sits in. The clamp form is continuous there with slope
+`−b_slip` on both sides, so **it introduces no boundary at zero slip at
+all**. The only new non-smooth surface is the cone itself.
+
 ## Why `Jᵀ` is the whole force-to-wrench conversion
 
 `λᵢ` is a scalar — a push along `n` applied *at the vertex*. The state is
@@ -136,6 +272,81 @@ return `λᵢ = 0` identically, so all three terms vanish.
 construction, which is the statement that the damper can only remove
 energy: `wᵀ(∂f_c/∂v)w = −b Σ (Jᵢ·w)² ≤ 0`, and at `w = v` that is exactly
 the dissipation rate.
+
+### What the tangential term adds
+
+Every shape above repeats one direction over, with `n^⊥` in place of `n`.
+For `βᵢ = −b_slip·sᵢ`:
+
+```
+∂βᵢ/∂q = −b_slip·∂sᵢ/∂q          ∂βᵢ/∂v = −b_slip·J_perp,ᵢ
+∂sᵢ/∂q = [ 0, 0, −ω·n^⊥·(pᵢ − c) ]
+```
+
+and `∂J_perp,ᵢ/∂q` has the same single nonzero entry at `(θ, θ)`, equal
+to `−n^⊥·(pᵢ − c)`, by the identical perp-twice-is-negation argument.
+Nothing new has to be derived — the normal derivation is reused with one
+substitution. That is the payoff of building the slip Jacobian in
+detection alongside the normal one rather than reconstructing it inside
+the force law.
+
+The velocity block picks up a matching term:
+
+```
+∂f_c/∂v = −b Σᵢ JᵢᵀJᵢ  −  b_slip Σᵢ J_perp,ᵢᵀJ_perp,ᵢ
+```
+
+which is worth writing as one object. Stack the active rows —
+normal and slip together — into `A`, and put the coefficients on a
+diagonal:
+
+```
+∂f_c/∂v = −Aᵀ · diag(b, b_slip) · A
+```
+
+Symmetric negative semidefinite, in both directions at once: for any `w`,
+`wᵀ(∂f_c/∂v)w = −b Σ(Jᵢ·w)² − b_slip Σ(J_perp,ᵢ·w)² ≤ 0`. Neither damper
+can add energy.
+
+### The saturated branch is structurally different
+
+On the cone, `βᵢ = −σ·μλᵢ` with `σ = sign(b_slip·sᵢ)`, and its entire
+dependence on state runs through the **normal** force:
+
+```
+∂βᵢ/∂v = σμb·Jᵢ                  ∂βᵢ/∂q = σμk·Jᵢ − σμb·ω·(n·(pᵢ−c))·e₃ᵀ
+```
+
+Slip has dropped out completely. So the velocity block picks up
+
+```
+J_perp,ᵢᵀ·(σμb·Jᵢ) = σμb · J_perp,ᵢᵀJᵢ
+```
+
+— an outer product of the **perp row with the normal row**, two vectors
+that are neither parallel nor even in the same direction. Symmetry goes,
+and with it the `−AᵀDA` form the generalized Delassus determinant
+depended on.
+
+It also stops being negative semidefinite, which is worth being careful
+about. Per contact, in coordinates `(a, c) = (Jᵢ·w, J_perp,ᵢ·w)`, the
+quadratic form is
+
+```
+−b·a² + σμb·a·c        matrix   b·⎡ −1    μ/2 ⎤
+                                  ⎣ μ/2   0   ⎦
+```
+
+whose determinant is `−b²μ²/4`, negative for any `μ > 0`. **Indefinite by
+construction**, not by accident of an operating point.
+
+That does not contradict friction being dissipative. `v·f_friction ≤ 0`
+still holds unconditionally — `sᵢ·βᵢ = −sᵢ·clamp(b_slip·sᵢ, μλᵢ) ≤ 0` for
+either sign of `sᵢ`. Negative semidefiniteness of the *Jacobian* is a
+strictly stronger claim than dissipativity of the *force*, and sliding
+friction is where the two come apart. The tests split accordingly:
+dissipation is asserted on the force in both regimes,
+negative semidefiniteness only while sticking.
 
 ### Symmetry is a free correctness check, and the damper expires it
 
@@ -241,11 +452,32 @@ pathology in a different place.
 
 ### The severity hierarchy
 
-| model | `f_c` at `dᵢ = 0` | one-step map | central difference across it |
+| model | `f_c` at the boundary | one-step map | central difference across it |
 |---|---|---|---|
 | spring only | C⁰, not C¹ | C⁰, kinked | bounded; blends the two one-sided slopes |
 | spring + damper | jump `b·\|ḋᵢ\|` on entry | **jump** `dt·M⁻¹·b·\|ḋᵢ\|·Jᵢᵀ` | diverges as `1/ε` |
 | Hunt–Crossley | C⁰, not C¹ | C⁰, kinked | bounded |
+| **friction cone** | C⁰, not C¹ | C⁰, kinked | bounded |
+
+The full inventory of non-smooth surfaces after step 8, which is what the
+gradient story actually depends on:
+
+| surface | condition | severity |
+|---|---|---|
+| normal activation | `dᵢ = 0` | **jump** with damping, kink without |
+| adhesion clamp | `−k·dᵢ − b·ḋᵢ = 0` | kink |
+| friction cone | `\|b_slip·sᵢ\| = μλᵢ` | kink |
+| zero slip | `sᵢ = 0` | **none** — the clamp form is smooth here |
+
+Friction adds exactly **one** new non-smooth surface, and it is a kink:
+at saturation both branches give `βᵢ = −σμλᵢ`, so the force is continuous
+and only the derivative jumps. Same severity class as the spring's
+activation boundary.
+
+That is worth stating plainly, because it is not obvious in advance:
+**friction does not make the gradient story categorically worse.** The
+damper's entry discontinuity remains the only jump in the model, and it
+is still the thing to worry about.
 
 Hunt–Crossley, `λᵢ = −dᵢ(k − b·ḋᵢ)`, is listed because it is the obvious
 step 8 comparison: multiplying the damping by depth makes it vanish
@@ -302,14 +534,32 @@ det(dz_dz) = det(Id₃ − dt·b·M⁻¹J_AᵀJ_A) = det(Id_a − dt·b·Delassu
 with `Delassus = J_A M⁻¹ J_Aᵀ`. For a single active contact this collapses
 to `1 − dt·b·(J M⁻¹ Jᵀ)`.
 
-So the damper's per-step phase-space contraction and step 6's central
-operator are the same object measured two ways — the Delassus operator
-turns up in step 5 already, and `test_penalty_jacobians.cpp` checks the
-identity to `1e-14` by assembling it independently from detection output
-and the mass matrix. It is a much sharper assertion than "the determinant
-is no longer 1": for a flat-resting unit square with `b = 50`,
-`dt = 1e-3`, `Delassus = [[2.5, −0.5], [−0.5, 2.5]]` and the determinant
-is exactly `0.765`.
+So the damper's per-step phase-space contraction and the Delassus
+operator are the same object measured two ways, and
+`test_penalty_jacobians.cpp` checks the identity to `1e-14` by assembling
+it independently from detection output and the mass matrix. It is a much
+sharper assertion than "the determinant is no longer 1": for a
+flat-resting unit square with `b = 50`, `dt = 1e-3`,
+`Delassus = [[2.5, −0.5], [−0.5, 2.5]]` and the determinant is exactly
+`0.765`.
+
+**Slip damping widens it rather than breaking it.** With
+`∂f_c/∂v = −Aᵀ D A` for `A` the stacked normal *and* slip rows and
+`D = diag(b, b_slip)`, the same Sylvester step gives
+
+```
+det(dz_dz) = det(Id − dt · (A M⁻¹ Aᵀ) · D)
+```
+
+where `A M⁻¹ Aᵀ` is the Delassus operator over **both directions**. The
+5b form is the special case with no slip rows and `D = b·Id`. So contact
+damping and friction contract phase-space volume through one operator,
+not two — which is a decent sign the tangential term was built on the
+right object.
+
+That form survives only while the tangential force is unbounded. The
+Coulomb cone makes `∂f_c/∂v` asymmetric, at which point it is no longer
+`−Aᵀ D A` for any `D` and the determinant stops factoring this way.
 
 ## What actually caps the stiffness
 
