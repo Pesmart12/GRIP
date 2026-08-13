@@ -2,11 +2,11 @@
 
 A 2D differentiable rigid-body contact simulator in C++20.
 
-Bodies fall, bounce, tip, slide and settle against static scenery — and
-every derivative of that motion is analytic, hand-derived, and validated
-against finite differences. Not autodiff: the Jacobians are written down
-from the maths and then checked against the forward function they claim
-to differentiate.
+Bodies fall, bounce, tip, slide, stack and settle — against scenery and
+against each other — and every derivative of that motion is analytic,
+hand-derived, and validated against finite differences. Not autodiff: the
+Jacobians are written down from the maths and then checked against the
+forward function they claim to differentiate.
 
 GRIP is a **library, not an application**. It simulates and it
 differentiates. Control algorithms — MPC, iLQR, RL training loops,
@@ -21,13 +21,14 @@ Working today:
 |---|---|
 | Integrator | symplectic (semi-implicit) Euler, per-step analytic Jacobians |
 | Bodies | multiple planar rigid bodies, `q = (x, y, θ)` |
-| Contact | convex polygon against a static half-plane |
-| Contact model | penalty — clamped Kelvin–Voigt spring-damper |
+| Contact | convex polygon against a static half-plane, and against other polygons |
+| Contact model | penalty — clamped Kelvin–Voigt spring-damper with a Coulomb friction cone |
 | Gradients | per-step, plus full-rollout via a reverse-mode adjoint sweep |
-| Tests | 71, covering finite-difference validation and structural invariants |
+| Tests | 113, covering finite-difference validation and structural invariants |
 
-Not there yet: **friction**, **body-body contact**, a stable public API,
-and Python bindings. See the roadmap below.
+Not there yet: **joints** (every body is free-floating with a wrench at
+its centre of mass), a stable public API, and Python bindings. See the
+roadmap below.
 
 ## Example
 
@@ -85,7 +86,7 @@ ctest --test-dir build
 src/
   core/        rigid body state, packing conventions
   dynamics/    mass matrix, forces, integrator
-  contact/     detection, half-plane, penalty formulation
+  contact/     detection (half-plane and polygon-polygon), penalty formulation
   gradient/    rollout and adjoint sweep
 tests/
   unit/        per-component
@@ -94,11 +95,11 @@ docs/
   derivations/ the maths, in Markdown + LaTeX
 ```
 
-Seven derivations in `docs/derivations/` carry the reasoning behind the
+Eight derivations in `docs/derivations/` carry the reasoning behind the
 code: `notation.md` (the canonical symbol table), `symplectic_euler.md`,
 `integrator_jacobians.md`, `multi_body_system.md`, `contact_detection.md`,
-`penalty_contact.md`, and `adjoint.md`. Code comments reference these
-rather than re-deriving inline.
+`penalty_contact.md`, `pair_detection.md`, and `adjoint.md`. Code comments
+reference these rather than re-deriving inline.
 
 ## Design notes
 
@@ -144,6 +145,14 @@ returns a finite wrong number and stays bounded as the step shrinks;
 across the damper's jump the same sweep diverges like `1/ε`. Which
 severity class a formulation lands in is treated as a measurement.
 
+Body-body contact adds a class the model did not previously contain. The
+damper's jump scales with closing speed, so it vanishes for grazing
+contact and concentrates predictably where impacts are fast. When the
+contact normal flips between faces, the jump scales with penetration
+*depth* and vanishes as nothing — the first discontinuity here not
+controlled by some velocity going to zero. Two squarely stacked boxes sit
+exactly on an instance of it, which the tests pin rather than avoid.
+
 ## Roadmap
 
 - [x] Symplectic Euler integrator, analytic Jacobians
@@ -152,9 +161,16 @@ severity class a formulation lands in is treated as a measurement.
 - [x] Penalty contact — spring and damper
 - [x] Separate integration from force assembly
 - [x] Rollout gradients via an adjoint sweep
-- [ ] Coulomb friction, in the penalty formulation
-- [ ] Body-body contact
+- [x] Coulomb friction, in the penalty formulation
+- [x] Body-body contact, with friction
 - [ ] Public API and Python bindings
+
+**Open, and not yet on the list: joints.** Every body here is
+free-floating with a wrench at its centre of mass, which covers a lot —
+balancing, hopping, pushing, stacking — but not articulated systems.
+CartPole, Acrobot, Hopper and Walker all need bilateral constraints, and
+faking them with stiff springs would undo the energy and stability
+properties the contact work is built on.
 
 Deferred, deliberately: a velocity-level NCP contact solver, implicit-
 function-theorem gradients through that solve, and running the same
