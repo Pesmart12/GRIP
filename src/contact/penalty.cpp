@@ -1,6 +1,7 @@
 #include "contact/penalty.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <vector>
 
@@ -147,6 +148,101 @@ ForceJacobian penalty_force_body_jacobian(const RigidBodyState& state, const Bod
     jac.df_dq(2, 2) -= tangential_force * tangent_dot_arm;
   }
   return jac;
+}
+
+
+std::vector<Eigen::Vector3d> penalty_forces_system(const std::vector<RigidBodyState>& states, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty) {
+  assert(states.size() == shapes.size());
+
+  std::vector<Eigen::Vector3d> forces(states.size(), Eigen::Vector3d::Zero());
+  for (std::size_t i = 0; i < states.size(); ++i) {
+    forces[i] += penalty_force_body(states[i], shapes[i], plane, penalty);
+  }
+
+  // Pairs in index order, i < j, so the sweep is deterministic without
+  // sorting -- the same reason contact i is always vertex i against the
+  // plane.
+  for (std::size_t i = 0; i < states.size(); ++i) {
+    for (std::size_t j = i + 1; j < states.size(); ++j) {
+      const std::vector<PairContact> contacts = detect_contacts_pair(states[i], shapes[i], states[j], shapes[j]);
+      const std::vector<PairJacobian> jacobians = detect_contacts_pair_jacobian(states[i], shapes[i], states[j], shapes[j]);
+
+      Eigen::Matrix<double, 6, 1> velocity;
+      velocity << states[i].v, states[j].v;
+
+      for (std::size_t k = 0; k < contacts.size(); ++k) {
+        const double closing_rate = jacobians[k] * velocity;
+        const double normal_force = NormalForceMagnitude(contacts[k].signed_distance, closing_rate, penalty);
+        // J^T lambda spans both bodies, so splitting it is just reading
+        // off halves. Newton's third law never has to be imposed.
+        const Eigen::Matrix<double, 6, 1> shared = jacobians[k].transpose() * normal_force;
+        forces[i] += shared.head<3>();
+        forces[j] += shared.tail<3>();
+      }
+    }
+  }
+  return forces;
+}
+
+
+SystemForceJacobian penalty_forces_system_jacobian(const std::vector<RigidBodyState>& states, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty) {
+  assert(states.size() == shapes.size());
+
+  const auto size = static_cast<Eigen::Index>(3 * states.size());
+  SystemForceJacobian jacobian;
+  jacobian.dF_dQ = Eigen::MatrixXd::Zero(size, size);
+  jacobian.dF_dV = Eigen::MatrixXd::Zero(size, size);
+
+  for (std::size_t i = 0; i < states.size(); ++i) {
+    const ForceJacobian against_plane = penalty_force_body_jacobian(states[i], shapes[i], plane, penalty);
+    const auto block = static_cast<Eigen::Index>(3 * i);
+    jacobian.dF_dQ.block<3, 3>(block, block) += against_plane.df_dq;
+    jacobian.dF_dV.block<3, 3>(block, block) += against_plane.df_dv;
+  }
+
+  for (std::size_t i = 0; i < states.size(); ++i) {
+    for (std::size_t j = i + 1; j < states.size(); ++j) {
+      const std::vector<PairContact> contacts = detect_contacts_pair(states[i], shapes[i], states[j], shapes[j]);
+      const std::vector<PairJacobian> jacobians = detect_contacts_pair_jacobian(states[i], shapes[i], states[j], shapes[j]);
+      const std::vector<PairHessian> hessians = detect_contacts_pair_hessian(states[i], shapes[i], states[j], shapes[j]);
+
+      Eigen::Matrix<double, 6, 1> velocity;
+      velocity << states[i].v, states[j].v;
+
+      for (std::size_t k = 0; k < contacts.size(); ++k) {
+        const PairJacobian& contact_jacobian = jacobians[k];
+        const double closing_rate = contact_jacobian * velocity;
+        const double normal_force = NormalForceMagnitude(contacts[k].signed_distance, closing_rate, penalty);
+        if (normal_force <= 0.0) {
+          continue;  // separated, or held at zero by the adhesion clamp
+        }
+
+        const Eigen::Matrix<double, 6, 6> outer = contact_jacobian.transpose() * contact_jacobian;
+        const Eigen::Matrix<double, 6, 1> swept = hessians[k] * velocity;
+
+        // Material stiffness, the damper's own configuration dependence
+        // through the closing rate, and geometric stiffness -- the same
+        // three terms as the half-plane, with the Hessian standing in
+        // for its lone nonzero entry.
+        const Eigen::Matrix<double, 6, 6> shared_position = -penalty.stiffness * outer - penalty.damping * contact_jacobian.transpose() * swept.transpose() + normal_force * hessians[k];
+        const Eigen::Matrix<double, 6, 6> shared_velocity = -penalty.damping * outer;
+
+        // Scatter the six shared degrees of freedom into the system
+        // blocks. The two off-diagonal quadrants are the coupling.
+        const Eigen::Index first = static_cast<Eigen::Index>(3 * i);
+        const Eigen::Index second = static_cast<Eigen::Index>(3 * j);
+        jacobian.dF_dQ.block<3, 3>(first, first) += shared_position.topLeftCorner<3, 3>();
+        jacobian.dF_dQ.block<3, 3>(first, second) += shared_position.topRightCorner<3, 3>();
+        jacobian.dF_dQ.block<3, 3>(second, first) += shared_position.bottomLeftCorner<3, 3>();
+        jacobian.dF_dQ.block<3, 3>(second, second) += shared_position.bottomRightCorner<3, 3>();
+        jacobian.dF_dV.block<3, 3>(first, first) += shared_velocity.topLeftCorner<3, 3>();
+        jacobian.dF_dV.block<3, 3>(first, second) += shared_velocity.topRightCorner<3, 3>();
+        jacobian.dF_dV.block<3, 3>(second, first) += shared_velocity.bottomLeftCorner<3, 3>();
+        jacobian.dF_dV.block<3, 3>(second, second) += shared_velocity.bottomRightCorner<3, 3>();
+      }
+    }
+  }
+  return jacobian;
 }
 
 }  // namespace grip

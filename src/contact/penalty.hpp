@@ -98,4 +98,38 @@ Eigen::Vector3d penalty_force_body(const RigidBodyState& state, const BodyShape&
 // correctness check; damping is non-conservative and takes that away.
 ForceJacobian penalty_force_body_jacobian(const RigidBodyState& state, const BodyShape& shape, const HalfPlane& plane, const PenaltyParams& penalty);
 
+
+// Contact forces for a whole system: every body against the plane, plus
+// every pair of bodies against each other. One generalized force per
+// body, indexed alongside states and shapes.
+//
+// This exists because body-body contact does not decompose. A contact
+// between bodies i and j puts +J^T lambda on one and -J^T lambda on the
+// other, so there is no such thing as "body i's contact force" computed
+// from body i alone -- the whole system has to be swept before any body
+// can be stepped.
+//
+// Pair contacts carry the normal spring and damper only. Friction
+// against the plane is unaffected; friction BETWEEN bodies is not here
+// yet, because the slip Jacobian's position derivative needs its own
+// pass through the contact-point dependence.
+std::vector<Eigen::Vector3d> penalty_forces_system(const std::vector<RigidBodyState>& states, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty);
+
+
+// dF/dQ and dF/dV for the above, over the stacked system.
+//
+// Plane contacts land on the diagonal blocks, exactly as before. Pair
+// contacts write to all four blocks of their two bodies, and the
+// off-diagonal ones are the first genuine coupling in the project --
+// what multi_body_system.md has been predicting since step 3.
+//
+// Each pair contact contributes, over its six shared degrees of freedom,
+//
+//   df/dq = -k J^T J - b J^T (H v)^T + lambda H
+//   df/dv = -b J^T J
+//
+// with H the gap Hessian. That is the half-plane formula with H in place
+// of its single nonzero entry.
+SystemForceJacobian penalty_forces_system_jacobian(const std::vector<RigidBodyState>& states, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty);
+
 }  // namespace grip

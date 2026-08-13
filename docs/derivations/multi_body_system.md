@@ -51,31 +51,52 @@ block-diagonal *assembly* itself:
   and `j` puts `+Jᵀλ` on one and `−Jᵀλ` on the other, so `∂F/∂Q` acquires
   an `(i, j)` block.
 
-## Where the coupling will enter
+## Where the coupling entered
 
-`integrate_system_jacobian` takes `std::vector<ForceJacobian>` — one per
-body — and stamps the resulting `StepJacobians` onto the diagonal. That
-signature *encodes the assumption* that body `i`'s force reads body `i`'s
-state alone. It is true for gravity, for the control wrench, and for
-contact against static scenery, and it is exactly what body-body contact
-falsifies.
+`integrate_system_jacobian` used to take `std::vector<ForceJacobian>` —
+one per body — and stamp the resulting `StepJacobians` onto the diagonal.
+That signature *encoded the assumption* that body `i`'s force reads body
+`i`'s state alone: true for gravity, for the control wrench, and for
+contact against static scenery, and exactly what body-body contact
+falsifies. It now takes a `SystemForceJacobian` carrying `∂F/∂Q` and
+`∂F/∂V` over the whole system.
 
-The chain rule itself does not change. With `F` the stacked forces and
-`M_sys⁻¹ = blockdiag(Mᵢ⁻¹)`, the system update is
+**The chain rule did not change.** With `F` the stacked forces and
+`M_sys⁻¹ = blockdiag(Mᵢ⁻¹)`,
 
 ```
-V_{t+1} = V_t + dt·M_sys⁻¹·F(Q, V, U)
-Q_{t+1} = Q_t + dt·V_{t+1}
+∂V_{t+1}/∂Q = dt·M_sys⁻¹·∂F/∂Q        ∂V_{t+1}/∂V = Id + dt·M_sys⁻¹·∂F/∂V
+∂Q_{t+1}/∂Q = Id + dt·∂V_{t+1}/∂Q     ∂Q_{t+1}/∂V = dt·∂V_{t+1}/∂V
 ```
 
 which is the single-body derivation of `integrator_jacobians.md` with
-`3B`-dimensional blocks. So what body-body contact needs is a
-representation for `∂F/∂Q` and `∂F/∂V` that can express coupling — *not*
-a different integrator, and not a different chain rule.
+`3B`-dimensional blocks. So all body-body contact needed was a
+representation able to *express* coupling — not a different integrator,
+and not a different chain rule. `dZ_dZ` comes out block-diagonal when
+`∂F/∂Q` is and dense when it is not; the assembly cannot tell.
 
-Deliberately not built yet: a dense `3B × 3B` force Jacobian would be the
-obvious generalization and the wrong one. Contacts are sparse — only
-touching pairs couple — so the right structure follows the contact graph,
-which does not exist to look at until detection produces one. Today
-`∂F/∂Q` genuinely is block-diagonal, because the bodies genuinely do not
-couple, and the per-body vector says so honestly.
+One thing that stayed diagonal: `dZ_dF`. Body `i`'s force moves body
+`i`'s state and nothing else, whatever produced that force. Coupling
+lives entirely in how forces are *computed*, never in how they are
+integrated.
+
+The two layouts differ, which is the one wrinkle. `Z` interleaves
+`(q, v)` per body while `Q` and `V` stack each separately, so the four
+blocks are scattered into `dZ_dZ` rather than copied.
+
+**Still dense, deliberately.** `∂F/∂Q` is `3B × 3B`, and the honest
+observation is that `dZ_dZ` was already a dense `6B × 6B`, so the force
+Jacobian is strictly smaller than what the step Jacobian costs anyway.
+The real structure is sparse and follows the contact graph — now that
+detection produces one, the question can finally be asked properly. It is
+one question about both matrices, for when a benchmark exists.
+
+## What the tests assert now
+
+`BodiesOutOfReachDoNotCouple` used to be called
+`OffDiagonalBlocksAreExactlyZero`, and it changed meaning without
+changing its numbers. It used to check that an assembly which never wrote
+off-diagonal entries had none — nearly a tautology. The assembly is now
+fully general, so the zeros come from `∂F/∂Q` having none, which is a
+statement about the physics. Same pattern as `det(dz_dz) = 1` gaining
+teeth at step 5a.

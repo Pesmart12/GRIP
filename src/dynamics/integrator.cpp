@@ -76,19 +76,40 @@ std::vector<RigidBodyState> integrate_system(const std::vector<RigidBodyState>& 
 }
 
 
-SystemStepJacobians integrate_system_jacobian(const std::vector<RigidBodyParams>& params, const std::vector<ForceJacobian>& force_jacobians, double dt) {
-  assert(params.size() == force_jacobians.size());
-
+SystemStepJacobians integrate_system_jacobian(const std::vector<RigidBodyParams>& params, const SystemForceJacobian& force_jacobian, double dt) {
   const auto n = static_cast<Eigen::Index>(params.size());
+  assert(force_jacobian.dF_dQ.rows() == 3 * n && force_jacobian.dF_dQ.cols() == 3 * n);
+  assert(force_jacobian.dF_dV.rows() == 3 * n && force_jacobian.dF_dV.cols() == 3 * n);
+
+  // M_sys^-1 is block-diagonal by construction -- mass never couples
+  // bodies, only forces do.
+  Eigen::MatrixXd inverse_mass = Eigen::MatrixXd::Zero(3 * n, 3 * n);
+  for (Eigen::Index i = 0; i < n; ++i) {
+    inverse_mass.block<3, 3>(3 * i, 3 * i) = inverse_mass_diagonal(params[static_cast<std::size_t>(i)]).asDiagonal();
+  }
+
+  const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(3 * n, 3 * n);
+  const Eigen::MatrixXd dv_dq = dt * inverse_mass * force_jacobian.dF_dQ;
+  const Eigen::MatrixXd dv_dv = identity + dt * inverse_mass * force_jacobian.dF_dV;
+  const Eigen::MatrixXd dq_dq = identity + dt * dv_dq;
+  const Eigen::MatrixXd dq_dv = dt * dv_dv;
+
   SystemStepJacobians jac;
   jac.dZ_dZ = SystemStateJacobian::Zero(6 * n, 6 * n);
   jac.dZ_dF = SystemForceSensitivity::Zero(6 * n, 3 * n);
 
+  // Z interleaves (q, v) per body while Q and V stack each separately, so
+  // the four blocks have to be scattered rather than copied.
   for (Eigen::Index i = 0; i < n; ++i) {
-    const std::size_t idx = static_cast<std::size_t>(i);
-    const StepJacobians body_jac = integrate_body_jacobian(params[idx], force_jacobians[idx], dt);
-    jac.dZ_dZ.block<6, 6>(6 * i, 6 * i) = body_jac.dz_dz;
-    jac.dZ_dF.block<6, 3>(6 * i, 3 * i) = body_jac.dz_df;
+    for (Eigen::Index j = 0; j < n; ++j) {
+      jac.dZ_dZ.block<3, 3>(6 * i, 6 * j) = dq_dq.block<3, 3>(3 * i, 3 * j);
+      jac.dZ_dZ.block<3, 3>(6 * i, 6 * j + 3) = dq_dv.block<3, 3>(3 * i, 3 * j);
+      jac.dZ_dZ.block<3, 3>(6 * i + 3, 6 * j) = dv_dq.block<3, 3>(3 * i, 3 * j);
+      jac.dZ_dZ.block<3, 3>(6 * i + 3, 6 * j + 3) = dv_dv.block<3, 3>(3 * i, 3 * j);
+    }
+    const Eigen::Matrix3d body_inverse_mass = inverse_mass_diagonal(params[static_cast<std::size_t>(i)]).asDiagonal();
+    jac.dZ_dF.block<3, 3>(6 * i, 3 * i) = dt * dt * body_inverse_mass;
+    jac.dZ_dF.block<3, 3>(6 * i + 3, 3 * i) = dt * body_inverse_mass;
   }
   return jac;
 }
@@ -109,9 +130,13 @@ std::vector<RigidBodyState> step_system(const std::vector<RigidBodyState>& state
   assert(states.size() == shapes.size());
   assert(states.size() == u.size());
 
-  std::vector<Eigen::Vector3d> forces(states.size());
+  // Contact is swept over the whole system before anything is stepped,
+  // because a body-body contact produces force on two bodies at once and
+  // cannot be attributed to either alone. Gravity and the control wrench
+  // stay per-body.
+  std::vector<Eigen::Vector3d> forces = penalty_forces_system(states, shapes, plane, penalty);
   for (std::size_t i = 0; i < states.size(); ++i) {
-    forces[i] = TotalForce(states[i], params[i], shapes[i], plane, penalty, u[i], gravity);
+    forces[i] += gravity_force(params[i], gravity) + u[i];
   }
   return integrate_system(states, params, forces, dt);
 }
@@ -121,11 +146,10 @@ SystemStepJacobians step_system_jacobian(const std::vector<RigidBodyState>& stat
   assert(states.size() == params.size());
   assert(states.size() == shapes.size());
 
-  std::vector<ForceJacobian> force_jacobians(states.size());
-  for (std::size_t i = 0; i < states.size(); ++i) {
-    force_jacobians[i] = TotalForceJacobian(states[i], params[i], shapes[i], plane, penalty, gravity);
-  }
-  return integrate_system_jacobian(params, force_jacobians, dt);
+  // Gravity is a constant wrench and u is additive, so neither
+  // contributes to dF/dQ or dF/dV -- contact is the whole of it.
+  static_cast<void>(gravity);
+  return integrate_system_jacobian(params, penalty_forces_system_jacobian(states, shapes, plane, penalty), dt);
 }
 
 }  // namespace grip

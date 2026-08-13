@@ -6,6 +6,7 @@ add_executable(grip_unit_tests
   unit/test_integrator.cpp
   unit/test_integrator_system.cpp
   unit/test_mass.cpp
+  unit/test_pair_detection.cpp
   unit/test_penalty_force.cpp
   unit/test_rollout.cpp
 )
@@ -18,6 +19,7 @@ add_executable(grip_validation_tests
   validation/test_energy_behavior.cpp
   validation/test_integrator_jacobians.cpp
   validation/test_integrator_system_jacobians.cpp
+  validation/test_pair_jacobians.cpp
   validation/test_penalty_jacobians.cpp
   validation/test_rollout_gradients.cpp
 )

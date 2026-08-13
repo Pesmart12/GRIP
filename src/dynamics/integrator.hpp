@@ -84,15 +84,20 @@ struct SystemStepJacobians {
 };
 
 
-// Per-body ForceJacobians in, block-diagonal system Jacobian out. The
-// block-diagonal structure is a statement about the forces, not about the
-// integrator: it holds exactly as long as body i's force reads body i's state
-// alone, which is true for gravity, control, and contact against static
-// scenery. Body-body contact is what breaks it, and it breaks it by making
-// dF/dQ couple -- at which point this signature needs a representation that
-// can express that coupling, following the contact graph's sparsity. See
-// docs/derivations/multi_body_system.md.
-SystemStepJacobians integrate_system_jacobian(const std::vector<RigidBodyParams>& params, const std::vector<ForceJacobian>& force_jacobians, double dt);
+// The system chain rule, which is the single-body one with 3B-dimensional
+// blocks:
+//
+//   dV_dQ = dt * M_sys^-1 * dF/dQ        dV_dV = Id + dt * M_sys^-1 * dF/dV
+//   dQ_dQ = Id + dt * dV_dQ              dQ_dV = dt * dV_dV
+//
+// Nothing here knows whether the forces couple. dZ_dZ comes out
+// block-diagonal when dF/dQ is and dense when it is not, so body-body
+// contact changes the contents and not the assembly -- which is what
+// multi_body_system.md predicted when this was still a per-body loop.
+//
+// dZ_dF stays block-diagonal regardless: body i's force moves body i's state
+// and nothing else, whatever produced that force.
+SystemStepJacobians integrate_system_jacobian(const std::vector<RigidBodyParams>& params, const SystemForceJacobian& force_jacobian, double dt);
 
 
 // ===========================================================================

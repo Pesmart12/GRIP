@@ -25,6 +25,24 @@ struct ForceJacobian {
   Eigen::Matrix3d df_dv = Eigen::Matrix3d::Zero();
 };
 
+// The same two blocks for a whole system, stacked as Q = (q_0, q_1, ...)
+// and V = (v_0, v_1, ...) -- body i at [3i, 3i+3).
+//
+// Not std::vector<ForceJacobian>, because that shape can only express
+// forces that read their own body's state. A contact between bodies i
+// and j puts a term in dF/dQ's (i, j) block, and there is nowhere to put
+// it in a per-body list. See docs/derivations/multi_body_system.md.
+//
+// Dense, and deliberately so for now: dZ_dZ is already a dense 6B x 6B,
+// so a 3B x 3B force Jacobian is strictly smaller than what the step
+// Jacobian costs anyway. The real structure is sparse and follows the
+// contact graph; that is one question about both, for when a benchmark
+// exists.
+struct SystemForceJacobian {
+  Eigen::MatrixXd dF_dQ;
+  Eigen::MatrixXd dF_dV;
+};
+
 // Gravity does not depend on q, v, mass, or g, so this is identically
 // zero -- every parameter is accepted but unused, to keep the call
 // signature uniform across force laws. Callers (the integrator's
