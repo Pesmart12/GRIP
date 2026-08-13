@@ -1,5 +1,7 @@
+#include <cmath>
 #include <cstddef>
 #include <functional>
+#include <numbers>
 #include <vector>
 
 #include <Eigen/LU>
@@ -205,6 +207,82 @@ TEST(SystemJacobians, MatchCentralFiniteDifferenceWithBodyBodyContact) {
       EXPECT_NEAR(analytic.dZ_dZ(i, j), fd(i, j), 1e-6) << "dZ_dZ mismatch at (" << i << ", " << j << ")";
     }
   }
+}
+
+TEST(SystemJacobians, MatchCentralFiniteDifferenceWithBodyBodyFriction) {
+  // The same end-to-end check with the cone switched on, so the slip
+  // Jacobian and its gradient are in the loop as well. Sliding rather
+  // than sticking, to exercise the branch where beta's whole state
+  // dependence runs through the normal force.
+  std::vector<RigidBodyState> states = StackedPair();
+  states[1].v = Eigen::Vector3d(3.0, -0.4, 0.25);  // sliding hard across the base
+  std::vector<RigidBodyParams> params(2);
+  params[0] = RigidBodyParams{2.0, 0.5};
+  params[1] = RigidBodyParams{1.0, 1.0 / 6.0};
+  const std::vector<BodyShape> shapes = {Platform(), UnitSquare()};
+  const HalfPlane ground;
+  const PenaltyParams penalty{/*stiffness=*/500.0, /*damping=*/20.0, /*slip_damping=*/40.0, /*friction=*/0.5};
+  const std::vector<Eigen::Vector3d> u = {Eigen::Vector3d(0.4, -0.2, 0.1), Eigen::Vector3d(-0.3, 0.5, -0.2)};
+  const double dt = 1.0e-3;
+  const std::size_t num_bodies = states.size();
+
+  const SystemStepJacobians analytic = step_system_jacobian(states, params, shapes, ground, penalty, dt, kDefaultGravity);
+
+  const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> step_from_state = [&](const Eigen::VectorXd& x) {
+    return PackSystem(step_system(UnpackSystem(x, num_bodies), params, shapes, ground, penalty, u, dt, kDefaultGravity));
+  };
+  const Eigen::MatrixXd fd = testutil::CentralDifferenceJacobianXd(step_from_state, PackSystem(states));
+
+  for (Eigen::Index i = 0; i < analytic.dZ_dZ.rows(); ++i) {
+    for (Eigen::Index j = 0; j < analytic.dZ_dZ.cols(); ++j) {
+      EXPECT_NEAR(analytic.dZ_dZ(i, j), fd(i, j), 1e-6) << "dZ_dZ mismatch at (" << i << ", " << j << ")";
+    }
+  }
+}
+
+TEST(SystemContactForces, PairFrictionHoldsBelowTheFrictionAngleAndReleasesAbove) {
+  // The pair analogue of the plane's slope test, and a stronger one:
+  // nothing here is axis-aligned, so the normal, the slip direction, the
+  // cone and the coupling all have to be right together.
+  //
+  // The base is given an enormous mass and its weight cancelled by a
+  // control wrench, so it stands in for immovable scenery while still
+  // being an ordinary body with an ordinary contact.
+  const double base_mass = 1.0e6;
+  const std::vector<RigidBodyParams> params = {RigidBodyParams{base_mass, base_mass}, RigidBodyParams{1.0, 1.0 / 6.0}};
+  const std::vector<BodyShape> shapes = {Platform(), UnitSquare()};
+  const PenaltyParams penalty{/*stiffness=*/1.0e4, /*damping=*/50.0, /*slip_damping=*/1000.0, /*friction=*/0.5};
+  const double gravity = 9.81;
+  const double dt = 1.0e-4;
+  const int steps = 5000;
+
+  HalfPlane far_away;
+  far_away.offset = -100.0;
+
+  const auto slide_speed_after = [&](double degrees) {
+    const double theta = degrees * std::numbers::pi / 180.0;
+    // Square resting square-on against the tilted top face, a hair into it.
+    const Eigen::Vector2d normal(-std::sin(theta), std::cos(theta));
+    const Eigen::Vector2d seat = 0.749 * normal;
+
+    std::vector<RigidBodyState> states(2);
+    states[0].q = Eigen::Vector3d(0.0, 0.0, theta);
+    states[1].q = Eigen::Vector3d(seat.x(), seat.y(), theta);
+
+    const std::vector<Eigen::Vector3d> u = {Eigen::Vector3d(0.0, base_mass * gravity, 0.0), Eigen::Vector3d::Zero()};
+    for (int i = 0; i < steps; ++i) {
+      states = step_system(states, params, shapes, far_away, penalty, u, dt, gravity);
+    }
+    return states[1].v.head<2>().norm();
+  };
+
+  // mu = 0.5 gives a friction angle of atan(0.5) = 26.6 degrees.
+  const double holding = slide_speed_after(20.0);
+  const double running = slide_speed_after(35.0);
+
+  EXPECT_LT(holding, 2.0e-2) << "below the friction angle the box should only creep";
+  EXPECT_GT(running, 0.4) << "above it the box should be sliding down the face";
+  EXPECT_GT(running / holding, 20.0) << "the two regimes should be unmistakable";
 }
 
 TEST(SystemContactForces, ObeyNewtonsThirdLaw) {

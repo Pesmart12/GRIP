@@ -357,15 +357,36 @@ ScalarJet Negate(const ScalarJet& scalar) {
 }
 
 
-// The gap, built from primitives, carrying both derivatives. Material
+// Perp is linear, so it just permutes and negates the derivatives too.
+VectorJet PerpOf(const VectorJet& vector) {
+  VectorJet jet;
+  jet.value = Perp(vector.value);
+  jet.gradient.row(0) = -vector.gradient.row(1);
+  jet.gradient.row(1) = vector.gradient.row(0);
+  jet.hessian[0] = -vector.hessian[1];
+  jet.hessian[1] = vector.hessian[0];
+  return jet;
+}
+
+
+// The primitives both the gap and the slip are built from. Material
 // vertices and clipped points differ only in whether the edge parameter
-// is a constant or a ratio -- everything downstream is identical.
-ScalarJet GapJet(const PairGeometry& geometry, const ClippedPoint& clipped, const Eigen::Vector2d& reference_center, const Eigen::Vector2d& incident_center) {
+// is a constant or a ratio; everything downstream is identical.
+struct ContactJets {
+  VectorJet normal;      // the reference face's own outward normal
+  VectorJet face_start;
+  VectorJet point;
+};
+
+
+ContactJets BuildContactJets(const PairGeometry& geometry, const ClippedPoint& clipped, const Eigen::Vector2d& reference_center, const Eigen::Vector2d& incident_center) {
   const int reference_offset = geometry.reference_is_first ? 0 : 3;
   const int incident_offset = geometry.reference_is_first ? 3 : 0;
 
-  const VectorJet normal = RotatingVector(geometry.normal, reference_offset + 2);
-  const VectorJet face_start = MaterialPoint(geometry.face_start, reference_center, reference_offset);
+  ContactJets jets;
+  jets.normal = RotatingVector(geometry.normal, reference_offset + 2);
+  jets.face_start = MaterialPoint(geometry.face_start, reference_center, reference_offset);
+
   const VectorJet incident_start = MaterialPoint(geometry.incident_start, incident_center, incident_offset);
   const VectorJet edge = RotatingVector(geometry.incident_end - geometry.incident_start, incident_offset + 2);
 
@@ -376,8 +397,67 @@ ScalarJet GapJet(const PairGeometry& geometry, const ClippedPoint& clipped, cons
     parameter = Negate(Divide(Dot(tangent, Subtract(incident_start, clip_origin)), Dot(tangent, edge)));
   }
 
-  const VectorJet point = Add(incident_start, Scale(edge, parameter));
-  return Dot(normal, Subtract(point, face_start));
+  jets.point = Add(incident_start, Scale(edge, parameter));
+  return jets;
+}
+
+
+ScalarJet GapJet(const ContactJets& jets) {
+  return Dot(jets.normal, Subtract(jets.point, jets.face_start));
+}
+
+
+// The slip Jacobian and its gradient.
+//
+// Slip is the relative tangential velocity of the two material points
+// currently coincident at the contact, taken second-relative-to-first to
+// match the normal's first -> second orientation:
+//
+//   s = n^perp . [ (v_2 + w_2 (p - c_2)^perp) - (v_1 + w_1 (p - c_1)^perp) ]
+//
+// Notice what is NOT here: no n^perp . (p - r0) term. The gap Jacobian
+// has one because it is a gradient and the normal rotates. This is not
+// the gradient of anything -- without a stick anchor there is no
+// tangential gap -- so the normal enters as a coefficient rather than
+// through a derivative.
+//
+// The rotating normal reappears one level up, in the gradient, which
+// picks up d(n^perp)/dtheta = -n. That gradient is NOT symmetric, for
+// the same reason: it is not a Hessian.
+struct SlipJet {
+  Eigen::Matrix<double, 1, 6> value = Eigen::Matrix<double, 1, 6>::Zero();
+  Matrix6d gradient = Matrix6d::Zero();  // row a = d(J_perp[a])/dq
+};
+
+
+SlipJet SlipJacobianJet(const ContactJets& jets, bool reference_is_first, const Eigen::Vector2d& first_center, const Eigen::Vector2d& second_center) {
+  // The stored normal points first -> second whichever body owns the
+  // face, and slip has to follow the same orientation.
+  VectorJet oriented = jets.normal;
+  if (!reference_is_first) {
+    oriented.value = -oriented.value;
+    oriented.gradient = -oriented.gradient;
+    oriented.hessian[0] = -oriented.hessian[0];
+    oriented.hessian[1] = -oriented.hessian[1];
+  }
+  const VectorJet tangent = PerpOf(oriented);
+
+  // A body's own centre is a material point with no moment arm, so it
+  // follows translation and ignores rotation.
+  const VectorJet first = MaterialPoint(first_center, first_center, 0);
+  const VectorJet second = MaterialPoint(second_center, second_center, 3);
+  const ScalarJet first_rotation = Dot(tangent, PerpOf(Subtract(jets.point, first)));
+  const ScalarJet second_rotation = Dot(tangent, PerpOf(Subtract(jets.point, second)));
+
+  SlipJet slip;
+  slip.value << -tangent.value.x(), -tangent.value.y(), -first_rotation.value, tangent.value.x(), tangent.value.y(), second_rotation.value;
+  slip.gradient.row(0) = -tangent.gradient.row(0);
+  slip.gradient.row(1) = -tangent.gradient.row(1);
+  slip.gradient.row(2) = -first_rotation.gradient;
+  slip.gradient.row(3) = tangent.gradient.row(0);
+  slip.gradient.row(4) = tangent.gradient.row(1);
+  slip.gradient.row(5) = second_rotation.gradient;
+  return slip;
 }
 
 }  // namespace
@@ -456,7 +536,7 @@ std::vector<PairJacobian> detect_contacts_pair_jacobian(const RigidBodyState& fi
 
   std::vector<PairJacobian> jacobians(geometry.points.size());
   for (std::size_t k = 0; k < geometry.points.size(); ++k) {
-    jacobians[k] = GapJet(geometry, geometry.points[k], reference_center, incident_center).gradient;
+    jacobians[k] = GapJet(BuildContactJets(geometry, geometry.points[k], reference_center, incident_center)).gradient;
   }
   return jacobians;
 }
@@ -469,9 +549,37 @@ std::vector<PairHessian> detect_contacts_pair_hessian(const RigidBodyState& firs
 
   std::vector<PairHessian> hessians(geometry.points.size());
   for (std::size_t k = 0; k < geometry.points.size(); ++k) {
-    hessians[k] = GapJet(geometry, geometry.points[k], reference_center, incident_center).hessian;
+    hessians[k] = GapJet(BuildContactJets(geometry, geometry.points[k], reference_center, incident_center)).hessian;
   }
   return hessians;
+}
+
+
+std::vector<PairJacobian> detect_contacts_pair_perp_jacobian(const RigidBodyState& first, const BodyShape& first_shape, const RigidBodyState& second, const BodyShape& second_shape) {
+  const PairGeometry geometry = ComputePairGeometry(first, first_shape, second, second_shape);
+  const Eigen::Vector2d reference_center = (geometry.reference_is_first ? first : second).q.head<2>();
+  const Eigen::Vector2d incident_center = (geometry.reference_is_first ? second : first).q.head<2>();
+
+  std::vector<PairJacobian> jacobians(geometry.points.size());
+  for (std::size_t k = 0; k < geometry.points.size(); ++k) {
+    const ContactJets jets = BuildContactJets(geometry, geometry.points[k], reference_center, incident_center);
+    jacobians[k] = SlipJacobianJet(jets, geometry.reference_is_first, first.q.head<2>(), second.q.head<2>()).value;
+  }
+  return jacobians;
+}
+
+
+std::vector<PairSlipGradient> detect_contacts_pair_perp_gradient(const RigidBodyState& first, const BodyShape& first_shape, const RigidBodyState& second, const BodyShape& second_shape) {
+  const PairGeometry geometry = ComputePairGeometry(first, first_shape, second, second_shape);
+  const Eigen::Vector2d reference_center = (geometry.reference_is_first ? first : second).q.head<2>();
+  const Eigen::Vector2d incident_center = (geometry.reference_is_first ? second : first).q.head<2>();
+
+  std::vector<PairSlipGradient> gradients(geometry.points.size());
+  for (std::size_t k = 0; k < geometry.points.size(); ++k) {
+    const ContactJets jets = BuildContactJets(geometry, geometry.points[k], reference_center, incident_center);
+    gradients[k] = SlipJacobianJet(jets, geometry.reference_is_first, first.q.head<2>(), second.q.head<2>()).gradient;
+  }
+  return gradients;
 }
 
 }  // namespace grip

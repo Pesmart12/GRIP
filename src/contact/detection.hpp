@@ -158,4 +158,43 @@ std::vector<PairJacobian> detect_contacts_pair_jacobian(const RigidBodyState& fi
 // Gap Hessians for the contacts above, in the same order. Symmetric.
 std::vector<PairHessian> detect_contacts_pair_hessian(const RigidBodyState& first, const BodyShape& first_shape, const RigidBodyState& second, const BodyShape& second_shape);
 
+
+// d(J_perp)/dq over the same six degrees of freedom. Row a is
+// d(J_perp[a])/dq.
+//
+// It comes out symmetric, which was not obvious: J_perp is the
+// velocity-to-slip map rather than the gradient of anything, so nothing
+// required it. The cross terms match through n^perp . a = -(n . a^perp),
+// which means J_perp is curl-free and so is a gradient after all -- of a
+// quantity the model never names, there being no tangential gap.
+//
+// Kept as its own name rather than reusing PairHessian, because the two
+// are symmetric for different reasons and only one of them is a second
+// derivative.
+using PairSlipGradient = Eigen::Matrix<double, 6, 6>;
+
+
+// Slip Jacobians for the contacts above, in the same order:
+//
+//   s = J_perp . [v_first ; v_second]
+//
+// the relative tangential velocity of the two material points currently
+// coincident at the contact, taken second-relative-to-first to match the
+// normal's orientation. Setting the first body to fixed scenery
+// recovers detect_contacts_body_perp_jacobian exactly.
+//
+// Simpler than the gap Jacobian, and for a reason worth knowing: there
+// is no n^perp . (p - r0) term. The gap Jacobian has one because it is a
+// gradient and the normal rotates with the reference body. This is not a
+// gradient -- without a stick anchor there is no tangential gap to
+// differentiate -- so the normal enters as a coefficient. The rotating
+// normal reappears in the gradient below instead.
+std::vector<PairJacobian> detect_contacts_pair_perp_jacobian(const RigidBodyState& first, const BodyShape& first_shape, const RigidBodyState& second, const BodyShape& second_shape);
+
+
+// The gradient of the above. Picks up d(n^perp)/dtheta = -n from the
+// reference body, and the contact point's motion including its clip
+// dependence.
+std::vector<PairSlipGradient> detect_contacts_pair_perp_gradient(const RigidBodyState& first, const BodyShape& first_shape, const RigidBodyState& second, const BodyShape& second_shape);
+
 }  // namespace grip

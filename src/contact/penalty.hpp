@@ -109,10 +109,10 @@ ForceJacobian penalty_force_body_jacobian(const RigidBodyState& state, const Bod
 // from body i alone -- the whole system has to be swept before any body
 // can be stepped.
 //
-// Pair contacts carry the normal spring and damper only. Friction
-// against the plane is unaffected; friction BETWEEN bodies is not here
-// yet, because the slip Jacobian's position derivative needs its own
-// pass through the contact-point dependence.
+// Pair contacts carry the same clamped Kelvin-Voigt normal force and the
+// same Coulomb cone as contacts against the plane. Each manifold point
+// carries its own cone, bounded by its own lambda, so a resting box can
+// stick at one corner while sliding at the other.
 std::vector<Eigen::Vector3d> penalty_forces_system(const std::vector<RigidBodyState>& states, const std::vector<BodyShape>& shapes, const HalfPlane& plane, const PenaltyParams& penalty);
 
 

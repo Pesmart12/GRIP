@@ -185,6 +185,106 @@ TEST(PairHessians, TranslationOnlyBlocksVanish) {
   }
 }
 
+TEST(PairSlipJacobians, MapVelocityToRelativeContactPointSlip) {
+  // The defining property, against an independent construction: slip is
+  // the relative velocity of the two material points coincident at the
+  // contact, projected on n^perp, taken second-relative-to-first.
+  const RigidBodyState first = At(-0.2, 0.1, -0.25);
+  const RigidBodyState second = At(0.25, 0.78, 0.45);
+  RigidBodyState moving_first = first;
+  RigidBodyState moving_second = second;
+  moving_first.v = Eigen::Vector3d(0.7, -1.3, 2.1);
+  moving_second.v = Eigen::Vector3d(-0.4, 0.9, -1.6);
+
+  const std::vector<PairContact> contacts = detect_contacts_pair(moving_first, Platform(), moving_second, UnitSquare());
+  const std::vector<PairJacobian> slip = detect_contacts_pair_perp_jacobian(moving_first, Platform(), moving_second, UnitSquare());
+
+  ASSERT_FALSE(contacts.empty());
+  Eigen::Matrix<double, 6, 1> velocity;
+  velocity << moving_first.v, moving_second.v;
+
+  for (std::size_t i = 0; i < contacts.size(); ++i) {
+    const Eigen::Vector2d tangent(-contacts[i].normal.y(), contacts[i].normal.x());
+    const Eigen::Vector2d first_arm = contacts[i].point - moving_first.q.head<2>();
+    const Eigen::Vector2d second_arm = contacts[i].point - moving_second.q.head<2>();
+    const Eigen::Vector2d first_velocity = moving_first.v.head<2>() + moving_first.v.z() * Eigen::Vector2d(-first_arm.y(), first_arm.x());
+    const Eigen::Vector2d second_velocity = moving_second.v.head<2>() + moving_second.v.z() * Eigen::Vector2d(-second_arm.y(), second_arm.x());
+
+    EXPECT_NEAR(slip[i] * velocity, tangent.dot(second_velocity - first_velocity), 1e-12) << "contact " << i;
+  }
+}
+
+TEST(PairSlipJacobians, MatchCentralFiniteDifferenceOfTheJacobian) {
+  // d(J_perp)/dq, which is where the rotating normal reappears -- J_perp
+  // itself has no term for it, being a velocity map rather than a
+  // gradient.
+  const auto expect_matches = [](const RigidBodyState& first, const RigidBodyState& second) {
+    const std::vector<PairSlipGradient> analytic = detect_contacts_pair_perp_gradient(first, Platform(), second, UnitSquare());
+    ASSERT_FALSE(analytic.empty());
+
+    for (std::size_t i = 0; i < analytic.size(); ++i) {
+      const std::function<Eigen::Matrix<double, 6, 1>(const Eigen::Matrix<double, 6, 1>&)> jacobian_of_q = [&](const Eigen::Matrix<double, 6, 1>& q) {
+        RigidBodyState perturbed_first = first;
+        RigidBodyState perturbed_second = second;
+        perturbed_first.q = q.head<3>();
+        perturbed_second.q = q.tail<3>();
+        return Eigen::Matrix<double, 6, 1>(detect_contacts_pair_perp_jacobian(perturbed_first, Platform(), perturbed_second, UnitSquare())[i].transpose());
+      };
+      Eigen::Matrix<double, 6, 1> q;
+      q << first.q, second.q;
+      const Eigen::Matrix<double, 6, 6> fd = testutil::CentralDifferenceJacobian<6, 6>(jacobian_of_q, q);
+
+      for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+          EXPECT_NEAR(analytic[i](a, b), fd(a, b), 1e-6) << "contact " << i << " at (" << a << ", " << b << ")";
+        }
+      }
+    }
+  };
+
+  expect_matches(At(0.0, 0.0, 0.02), At(0.0, 0.65, 0.0));
+  expect_matches(At(0.0, 0.0, 0.0), At(0.1, 0.82, 0.3));
+  expect_matches(At(-0.2, 0.1, -0.25), At(0.25, 0.78, 0.45));
+}
+
+TEST(PairSlipJacobians, GradientComesOutSymmetric) {
+  // Not what I expected. J_perp is not the gradient of anything -- there
+  // is no tangential gap to differentiate -- so its derivative had no
+  // obvious reason to be symmetric. It is anyway, which says J_perp is
+  // curl-free and therefore a gradient after all, of a quantity nothing
+  // in the model names.
+  //
+  // The cross terms match through the perp identity n^perp . a =
+  // -(n . a^perp). For instance
+  //
+  //   d(J_perp[5])/dtheta_1 = -n . (p - c_2)^perp
+  //   d(J_perp[2])/dtheta_2 =  n^perp . (p - c_2)
+  //
+  // which are the same number written two ways.
+  //
+  // Asserted rather than merely noted, because every entry is produced
+  // independently by the jet composition, so agreement across the
+  // diagonal is a real check on the product rules.
+  const std::vector<std::pair<RigidBodyState, RigidBodyState>> configurations = {
+      {At(0.0, 0.0, 0.02), At(0.0, 0.65, 0.0)},
+      {At(0.0, 0.0, 0.0), At(0.1, 0.82, 0.3)},
+      {At(-0.2, 0.1, -0.25), At(0.25, 0.78, 0.45)},
+  };
+
+  for (const auto& [first, second] : configurations) {
+    const std::vector<PairSlipGradient> gradients = detect_contacts_pair_perp_gradient(first, Platform(), second, UnitSquare());
+    ASSERT_FALSE(gradients.empty()) << first.q.transpose() << " / " << second.q.transpose();
+
+    for (const PairSlipGradient& gradient : gradients) {
+      for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < a; ++b) {
+          EXPECT_NEAR(gradient(a, b), gradient(b, a), 1e-10) << "at (" << a << ", " << b << ")";
+        }
+      }
+    }
+  }
+}
+
 TEST(PairJacobians, TranslationBlockIsTheContactNormal) {
   // The gap is linear in either body's position, so its translation
   // derivatives are exactly the normal -- not approximately, exactly.

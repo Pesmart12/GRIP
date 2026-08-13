@@ -202,6 +202,72 @@ point material in one body follows its translation and sweeps
   is looser than the Jacobian tests' — still six digits on all
   thirty-six entries.
 
+## Friction between bodies
+
+Slip at a pair contact is the relative tangential velocity of the two
+material points currently coincident there, taken second-relative-to-first
+to match the normal's orientation:
+
+```
+s = n^⊥ · [ (v₂ + ω₂·(p−c₂)^⊥) − (v₁ + ω₁·(p−c₁)^⊥) ]
+```
+
+which is linear in `[v₁; v₂]`, so
+
+```
+J_perp = [ −n^⊥, −n^⊥·(p−c₁)^⊥ | n^⊥, n^⊥·(p−c₂)^⊥ ]
+```
+
+**Simpler than the gap Jacobian**, and worth knowing why: there is no
+`n^⊥·(p − r₀)` term. The gap Jacobian has one because it is a gradient
+and the normal rotates with the reference body. This is not a gradient —
+without a stick anchor there is no tangential gap — so the normal enters
+as a coefficient rather than through a derivative. Setting body 1 to
+fixed scenery recovers the half-plane form exactly.
+
+The force law is unchanged from `penalty_contact.md`: the same clamped
+Kelvin–Voigt normal force, the same Coulomb cone `|β| ≤ μλ`. Each
+manifold point carries **its own cone**, bounded by its own `λ`, so a
+resting box can stick at one corner while sliding at the other.
+
+### The gradient, and a surprise
+
+The rotating normal reappears one level up, in `∂J_perp/∂q`, which is
+what `∂f/∂q` needs. It picks up `∂n^⊥/∂θ_ref = −n` along with the contact
+point's motion, clip dependence included.
+
+That object was expected to be a plain non-symmetric `6×6` — `J_perp` is
+not a gradient, so nothing required symmetry. **It is symmetric anyway.**
+The cross terms match through the perp identity `n^⊥·a = −(n·a^⊥)`:
+
+```
+∂J_perp[5]/∂θ₁ = −n·(p−c₂)^⊥            ∂J_perp[2]/∂θ₂ = n^⊥·(p−c₂)
+```
+
+the same number written two ways. So `J_perp` is curl-free, and therefore
+*is* the gradient of something — a quantity this model never names, since
+sliding accumulates no position. Recorded because it was a surprise, and
+because it makes symmetry a genuine check on the composition rather than
+a property of how the result is stored.
+
+It keeps its own name, `PairSlipGradient`, rather than reusing
+`PairHessian`. Both are symmetric, for unrelated reasons, and only one of
+them is a second derivative.
+
+### Assembly
+
+Writing `G = ∂J_perp/∂q`, the friction contribution is
+
+```
+∂f/∂q = J_perpᵀ(∂β/∂q) + β·G
+∂f/∂v = J_perpᵀ(∂β/∂v)
+```
+
+with `∂β` taking the two branches of `penalty_contact.md`. Sticking gives
+`∂β/∂q = −b_slip·vᵀG` and `∂β/∂v = −b_slip·J_perp`. Sliding pins `β` to
+`∓μλ`, so its whole state dependence runs through the **normal** force
+and reuses the gap Hessian already computed.
+
 ## Three new non-smooth surfaces
 
 Body-body contact adds more than the force law did, and one of them is a

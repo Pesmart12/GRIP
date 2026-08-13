@@ -166,6 +166,7 @@ std::vector<Eigen::Vector3d> penalty_forces_system(const std::vector<RigidBodySt
     for (std::size_t j = i + 1; j < states.size(); ++j) {
       const std::vector<PairContact> contacts = detect_contacts_pair(states[i], shapes[i], states[j], shapes[j]);
       const std::vector<PairJacobian> jacobians = detect_contacts_pair_jacobian(states[i], shapes[i], states[j], shapes[j]);
+      const std::vector<PairJacobian> slip_jacobians = detect_contacts_pair_perp_jacobian(states[i], shapes[i], states[j], shapes[j]);
 
       Eigen::Matrix<double, 6, 1> velocity;
       velocity << states[i].v, states[j].v;
@@ -173,9 +174,15 @@ std::vector<Eigen::Vector3d> penalty_forces_system(const std::vector<RigidBodySt
       for (std::size_t k = 0; k < contacts.size(); ++k) {
         const double closing_rate = jacobians[k] * velocity;
         const double normal_force = NormalForceMagnitude(contacts[k].signed_distance, closing_rate, penalty);
+        const double slip_rate = slip_jacobians[k] * velocity;
+        const double tangential_force = TangentialForceMagnitude(normal_force, slip_rate, penalty);
+
         // J^T lambda spans both bodies, so splitting it is just reading
-        // off halves. Newton's third law never has to be imposed.
-        const Eigen::Matrix<double, 6, 1> shared = jacobians[k].transpose() * normal_force;
+        // off halves. Newton's third law never has to be imposed, and
+        // the friction term inherits that for free. Each manifold point
+        // carries its own cone, bounded by its own lambda, so a resting
+        // box can stick at one corner while sliding at the other.
+        const Eigen::Matrix<double, 6, 1> shared = jacobians[k].transpose() * normal_force + slip_jacobians[k].transpose() * tangential_force;
         forces[i] += shared.head<3>();
         forces[j] += shared.tail<3>();
       }
@@ -205,6 +212,8 @@ SystemForceJacobian penalty_forces_system_jacobian(const std::vector<RigidBodySt
       const std::vector<PairContact> contacts = detect_contacts_pair(states[i], shapes[i], states[j], shapes[j]);
       const std::vector<PairJacobian> jacobians = detect_contacts_pair_jacobian(states[i], shapes[i], states[j], shapes[j]);
       const std::vector<PairHessian> hessians = detect_contacts_pair_hessian(states[i], shapes[i], states[j], shapes[j]);
+      const std::vector<PairJacobian> slip_jacobians = detect_contacts_pair_perp_jacobian(states[i], shapes[i], states[j], shapes[j]);
+      const std::vector<PairSlipGradient> slip_gradients = detect_contacts_pair_perp_gradient(states[i], shapes[i], states[j], shapes[j]);
 
       Eigen::Matrix<double, 6, 1> velocity;
       velocity << states[i].v, states[j].v;
@@ -224,8 +233,37 @@ SystemForceJacobian penalty_forces_system_jacobian(const std::vector<RigidBodySt
         // through the closing rate, and geometric stiffness -- the same
         // three terms as the half-plane, with the Hessian standing in
         // for its lone nonzero entry.
-        const Eigen::Matrix<double, 6, 6> shared_position = -penalty.stiffness * outer - penalty.damping * contact_jacobian.transpose() * swept.transpose() + normal_force * hessians[k];
-        const Eigen::Matrix<double, 6, 6> shared_velocity = -penalty.damping * outer;
+        Eigen::Matrix<double, 6, 6> shared_position = -penalty.stiffness * outer - penalty.damping * contact_jacobian.transpose() * swept.transpose() + normal_force * hessians[k];
+        Eigen::Matrix<double, 6, 6> shared_velocity = -penalty.damping * outer;
+
+        // Friction, repeating the structure one direction over. beta's
+        // geometric term uses d(J_perp)/dq rather than the gap Hessian,
+        // because J_perp is not a gradient and its derivative is not
+        // symmetric.
+        const PairJacobian& slip_jacobian = slip_jacobians[k];
+        const PairSlipGradient& slip_gradient = slip_gradients[k];
+        const double slip_rate = slip_jacobian * velocity;
+        const double tangential_force = TangentialForceMagnitude(normal_force, slip_rate, penalty);
+        const double unclamped = penalty.slip_damping * slip_rate;
+        const double bound = penalty.friction * normal_force;
+
+        if (std::abs(unclamped) > bound) {
+          // Sliding: beta is pinned to -sigma*mu*lambda, so its whole
+          // state dependence runs through the NORMAL force.
+          const double scale = (unclamped > 0.0 ? 1.0 : -1.0) * penalty.friction;
+          shared_position += scale * slip_jacobian.transpose() * (penalty.stiffness * contact_jacobian + penalty.damping * swept.transpose());
+          shared_velocity += scale * penalty.damping * slip_jacobian.transpose() * contact_jacobian;
+        } else {
+          // Sticking: beta = -b_slip * s, and s depends on q through
+          // J_perp alone.
+          const Eigen::Matrix<double, 1, 6> slip_rate_gradient = velocity.transpose() * slip_gradient;
+          shared_position -= penalty.slip_damping * slip_jacobian.transpose() * slip_rate_gradient;
+          shared_velocity -= penalty.slip_damping * slip_jacobian.transpose() * slip_jacobian;
+        }
+
+        // The geometric term, from J_perp itself rotating under a fixed
+        // tangential force. Independent of which branch produced beta.
+        shared_position += tangential_force * slip_gradient;
 
         // Scatter the six shared degrees of freedom into the system
         // blocks. The two off-diagonal quadrants are the coupling.
