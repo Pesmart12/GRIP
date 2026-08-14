@@ -35,3 +35,11 @@ enable_testing()
 
 add_subdirectory(src)
 add_subdirectory(tests)
+
+# Off by default would be the right choice once anything links this as a
+# library -- a physics dependency should not drag in a window toolkit.
+# On for now because there are no consumers yet and the demo is the point.
+option(GRIP_BUILD_DEMOS "Build the raylib demo (fetches raylib)" ON)
+if(GRIP_BUILD_DEMOS)
+  add_subdirectory(demos)
+endif()
