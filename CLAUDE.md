@@ -45,11 +45,11 @@ rewritten once. If following it would produce something worse, say so.
 
 ## What is already built
 
-Steps 1–5, complete and green:
+Steps 1–9, complete and green. 113 tests.
 
 1. **Symplectic (semi-implicit) Euler integrator** for a single 2D rigid
    body under gravity.
-2. **Analytic dynamics Jacobians** `∂z_{t+1}/∂z_t` and `∂z_{t+1}/∂u`,
+2. **Analytic dynamics Jacobians** `∂z_{t+1}/∂z_t` and `∂z_{t+1}/∂f`,
    validated against central finite differences.
 3. **Multiple bodies**, parallel vectors, block-diagonal system Jacobian.
 4. **Contact detection** — convex polygon against a static half-plane.
@@ -58,42 +58,88 @@ Steps 1–5, complete and green:
 5. **Penalty contact** — clamped Kelvin–Voigt spring-damper, with its
    force Jacobian and the determinant identity
    `det(dz_dz) = det(Id + dt·M⁻¹·∂f/∂v)`.
+6. **Integration separated from force assembly.** `integrate_*` takes a
+   force somebody else summed and knows nothing about contact;
+   `step_*` sits on top and does the summing.
+7. **Rollout gradients** — a reverse-mode adjoint sweep over a
+   trajectory, storing states only, since the Jacobians are pure
+   functions of state.
+8. **Coulomb friction**, clamped Kelvin–Voigt tangentially with a cone
+   bound `|β| ≤ μλ`.
+9. **Body-body contact** — SAT plus clipping, the gap Hessian via a
+   file-local second-order jet, and a genuinely coupled `∂F/∂Q`. With
+   friction between bodies.
 
-So: a frictionless, single-plane, multi-body differentiable simulator
-with per-step gradients. Bodies fall, bounce, tip, and settle, and every
-derivative is analytic and finite-difference validated.
+So: a multi-body differentiable simulator with friction, body-body
+contact, and gradients through whole trajectories. Every derivative is
+analytic and finite-difference validated.
 
-Known gaps, in the order they matter: no rollout gradients, no friction,
-no body-body contact, no callable API beyond the C++ headers.
+Known gaps, in the order they matter: **no joints** (every body is
+free-floating with a wrench at its COM), no callable API beyond the C++
+headers, and no benchmark.
 
 ## Build order
 
 Each step tested and green before the next begins.
 
-6. **Separate contact from the force law.** The integrator should take
-   net *external* force and expose a clean seam where contact resolution
-   happens. Today penalty contact is welded into `f(q, v, u)`, which
-   works only because penalty contact *is* a force. Doing this now costs
-   ~19 call sites on a green suite; doing it after a control stack exists
-   costs much more.
-7. **Rollout gradients.** Compose the per-step `dz_dz` / `dz_du` over a
-   trajectory with an adjoint sweep, so `∂(terminal quantity)/∂(inputs)`
-   is available without O(T²) cost. This is the single largest gap: both
-   gradient-based MPC and first-order RL need it, and no consumer repo
-   can supply it.
-8. **Coulomb friction**, in the penalty formulation. A tangential force
-   along `n^⊥` with a magnitude clamped to `μλ`. Widens the task set
-   enormously — without it nothing can be pushed, dragged, or grasped.
-9. **Body-body contact.** Polygon-polygon detection, then the same
-   penalty response. This is the first thing that couples bodies, so it
-   is also the first thing that breaks the block-diagonal system
-   Jacobian.
-10. **Public API and Python bindings.** pybind11. Deliberately last: the
-    surface should stop moving before it gets bound, and steps 8–9 both
-    change scene construction.
+10. **Joints.** Bilateral constraints, which is the first thing in this
+    project that is not a force. Revolute only to start — it is what
+    every 2D benchmark needs, and prismatic and weld are the same
+    machinery with a different `c(q)`. Reduced coordinates are *out*:
+    they would replace `RigidBodyState`, the stacking convention, and the
+    constant diagonal mass matrix all at once. Penalty first, with a
+    bilateral constraint solve as a known follow-on — the constraint
+    function and its Jacobian are shared either way, so the geometry work
+    is not thrown away. See the discussion note below.
+11. **Public API and Python bindings.** pybind11. Deliberately after
+    joints: they change scene construction, and binding twice is what
+    putting bindings last was meant to avoid.
 
-Steps 6–7 are the current milestone. Don't scope past them until they're
-done.
+Step 10 is the current milestone.
+
+**Not on the numbered list, and wanted:** a benchmark. `benchmarks/` is
+empty, and three performance questions have accumulated with nothing to
+answer them — detection allocating several vectors per call, `∂F/∂Q`
+being dense when the contact graph is sparse, and the adjoint's `O(B²)`
+matvec on a matrix that is block-diagonal whenever bodies are not
+touching. Each was deferred with "when a benchmark says it matters."
+
+## Note on joints: penalty first, solve later
+
+A joint is a **bilateral** constraint `c(q) = 0` — an equality, with a
+force that pushes or pulls whatever is needed. Contact fitted the
+architecture because contact *is* a force; a joint is not, and this is
+the first thing that genuinely does not fit.
+
+Three options, one immediately out. **Reduced coordinates** would satisfy
+constraints exactly by construction, and would also replace
+`RigidBodyState`, `Pack`/`Unpack`, and the constant diagonal mass
+matrix — reintroducing the `M(q)` and Coriolis terms
+`symplectic_euler.md` spends a section celebrating the absence of. It is
+a rewrite wearing a feature's clothes.
+
+That leaves **penalty joints** (a very stiff spring-damper between the
+anchor points, fits the existing force path with zero structural change)
+and a **bilateral constraint solve** (`(J_c M⁻¹ J_cᵀ)λ = …`, exact, but
+a solve in the update loop).
+
+The number that decides it: penalty joints hold to `error = F/k_j`, so a
+pendulum at ~10 N wants `k_j ≈ 10⁴` and works at the contact timestep,
+while a walker landing at ~500 N wants `5×10⁵` and roughly `dt = 10⁻⁴`.
+That is **10× more steps than contact alone** — real, and not
+disqualifying.
+
+Penalty first, because both approaches need the same `c(q)` and
+`J_c = ∂c/∂q`, so the geometry work carries over; because the step 9 jet
+already produces the Hessian the force Jacobian needs; and because it
+tells us empirically whether the stiffness limit bites for the tasks that
+actually get built.
+
+Worth correcting one thing if it comes up: a bilateral solve is **much
+easier than the deferred NCP work below**, not a back door to it. No
+complementarity, no active set, no disjunction — it is a linear solve,
+its IFT gradient is textbook, and it is *smooth*, so none of the contact
+gradient pathology applies.
 
 ## Deferred: NCP, IFT gradients, formulation swapping
 
@@ -165,7 +211,11 @@ Settled unless explicitly reopened:
   understand the integrator's internals to run a rollout.
 
 New dependencies beyond Eigen, GoogleTest, and (later) pybind11 need
-discussion first.
+discussion first. **raylib** is in, for the demo only, behind
+`GRIP_BUILD_DEMOS` — it is fetched and linked by `demos/` and by nothing
+else. That option defaults ON while there are no consumers; flip it OFF
+at the bindings step, since a physics library should not drag a window
+toolkit into anything that links it.
 
 ## Code style
 
@@ -195,14 +245,15 @@ grip/
   src/
     core/        types, math helpers, rigid body state
     dynamics/    mass matrices, forces, integrator
-    contact/     detection, formulations
+    contact/     detection (half-plane and polygon-polygon), formulations
     gradient/    rollout / adjoint path
   tests/
     unit/        per-component tests
     validation/  finite-difference and conservation checks
+  demos/         raylib, gated behind GRIP_BUILD_DEMOS
   docs/
     derivations/ the math, in Markdown + LaTeX
-  benchmarks/
+  benchmarks/    empty; see the note under the build order
   CMakeLists.txt
 ```
 
@@ -287,5 +338,10 @@ in the repo.
 
 If a session drifts toward architecture astronomy, research positioning,
 or features that aren't the next numbered step, say so and point back to
-the build order. Right now that step is 6: get contact out of the force
-law, on a green suite, before anything is built on top of it.
+the build order. Right now that step is 10: revolute joints as a penalty
+force law, on a green suite, before the API surface gets bound.
+
+Keep this file current as steps land. It went stale once already —
+rewritten at the replan, then left claiming step 6 was next while 6
+through 9 all shipped — which is the kind of drift that makes a session
+start by trusting the wrong thing.
