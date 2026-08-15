@@ -1,4 +1,4 @@
-# GRIP — Gradient-Reliable Instrument Physics
+# GRIP
 
 A 2D differentiable rigid-body contact simulator in C++20.
 
