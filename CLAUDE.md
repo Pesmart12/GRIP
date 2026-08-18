@@ -14,13 +14,21 @@ That split decides a lot of borderline questions. If a consumer repo
 could reasonably implement it, it probably doesn't belong here. If it
 requires knowing how the physics works, it does.
 
-There is a longer-term technical question behind the project: *how
-trustworthy are gradients through a contact solver, and how does the
-choice of contact formulation affect them?* That is a destination,
-possibly a thesis, and explicitly **not** what the next stretch of work
-is about. It is recorded here so the architecture doesn't accidentally
-foreclose it — not as a requirement. No ontologies, no hypotheses, no
-publication strategy in this repo.
+The work is planned in three releases, set out under **Release plan**
+below. Briefly: **1.0** puts a public API and Python bindings on the
+physics that already exists, **2.0** replaces penalty contact with a
+velocity-level NCP solve and IFT gradients and adds joints inside that
+same solve, and **3.0** is parallelism. Each one changes what the library
+*is*. None of them is a research programme.
+
+One question was dropped deliberately, and is recorded here so it doesn't
+get reinvented: *how does the choice of contact formulation affect
+gradient quality?* The literature has largely answered it — first-order
+gradients through contact are not reliably better than zeroth-order
+estimators in stiff regimes, and what repairs them is smoothing rather
+than the choice of formulation. That collapses the question into a knob
+rather than a comparison, which is not enough to build a repository
+around. No ontologies, no hypotheses, no publication strategy here.
 
 ## How we work
 
@@ -40,8 +48,8 @@ real tradeoffs, surface them and ask rather than picking silently.
 
 This file is **guidelines, not scripture**. It records decisions that were
 made deliberately, so they aren't re-litigated by accident — but it is
-wrong sometimes, and the build order in particular has already been
-rewritten once. If following it would produce something worse, say so.
+wrong sometimes, and the plan of work in particular has already been
+rewritten twice. If following it would produce something worse, say so.
 
 ## What is already built
 
@@ -74,37 +82,126 @@ So: a multi-body differentiable simulator with friction, body-body
 contact, and gradients through whole trajectories. Every derivative is
 analytic and finite-difference validated.
 
-Known gaps, in the order they matter: **no joints** (every body is
-free-floating with a wrench at its COM), no callable API beyond the C++
-headers, and no benchmark.
+Known gaps, in the order they matter: **no callable API** beyond the C++
+headers, no joints (every body is free-floating with a wrench at its
+COM), and no benchmark. That order changed when joints moved into 2.0.
 
-## Build order
+## Release plan
 
-Each step tested and green before the next begins.
+Each step tested and green before the next begins. Step numbering
+continues from the nine already built.
 
-10. **Joints.** Bilateral constraints, which is the first thing in this
-    project that is not a force. Revolute only to start — it is what
-    every 2D benchmark needs, and prismatic and weld are the same
-    machinery with a different `c(q)`. Reduced coordinates are *out*:
-    they would replace `RigidBodyState`, the stacking convention, and the
-    constant diagonal mass matrix all at once. Penalty first, with a
-    bilateral constraint solve as a known follow-on — the constraint
-    function and its Jacobian are shared either way, so the geometry work
-    is not thrown away. See the discussion note below.
-11. **Public API and Python bindings.** pybind11. Deliberately after
-    joints: they change scene construction, and binding twice is what
-    putting bindings last was meant to avoid.
+### 1.0 — make it callable
+
+10. **Public API and Python bindings.** pybind11, over the free-body,
+    contact-and-friction physics that is already built and green. **No
+    new physics ships in 1.0.**
+
+    **The API takes a batch of scenes, not one.** That is the single
+    decision at this step that is expensive to reverse: 3.0 needs the
+    batched shape, and adding a batch dimension after bindings exist is
+    exactly the rebinding this ordering was meant to prevent. A batch of
+    one is a fine degenerate case; a scalar API that later grows a batch
+    dimension is not.
+
+    One further hedge, much cheaper: shape the scene description so a
+    `joints` vector arrives later as an **added field** rather than a
+    signature change. Joints land in 2.0, and this is what keeps that
+    from forcing a rebind.
 
 Step 10 is the current milestone.
 
-**Not on the numbered list, and wanted:** a benchmark. `benchmarks/` is
-empty, and three performance questions have accumulated with nothing to
-answer them — detection allocating several vectors per call, `∂F/∂Q`
-being dense when the contact graph is sparse, and the adjoint's `O(B²)`
-matvec on a matrix that is block-diagonal whenever bodies are not
-touching. Each was deferred with "when a benchmark says it matters."
+**Joints used to be step 10, and are now deferred into 2.0.** The reason
+they sat in front of the API was that they change scene construction —
+but a data-driven scene absorbs a joints vector as an added field, which
+is a recompile rather than a redesign, and the API decision that is
+genuinely expensive to reverse is the batch dimension, which is
+orthogonal to joints. Meanwhile penalty joints would have been
+scaffolding replaced by 2.0's solver, at a 10× timestep cost for exactly
+the articulated systems they exist to enable. See the note below.
 
-## Note on joints: penalty first, solve later
+### 2.0 — replace penalty contact, and add joints
+
+A velocity-level **NCP contact solve** with **IFT gradients**, in the
+style of Dojo. Previously listed here as deferred; it is now the plan.
+
+The argument for it is *not* "NCP gradients are better." It is that
+penalty couples two knobs that should be independent.
+`penalty_contact.md` states the bind plainly: **the jump in the
+derivative is the stiffness**. The knob that improves the physics is the
+same knob that degrades the gradient, and no amount of tuning escapes it.
+An NCP solve with a central-path relaxation breaks that coupling —
+non-penetration is exact regardless of the relaxation parameter, and the
+relaxation controls only gradient smoothness. Hard contact and smooth
+gradients still trade off against each other; the point is that they
+become *separate* knobs.
+
+Two consequences for implementation:
+
+- **The solver choice is the gradient story.** Interior-point with a
+  strictly positive relaxation gives smooth IFT derivatives. Projected
+  Gauss–Seidel gives an active set, a piecewise derivative, and the same
+  pathology relocated. Don't build PGS and expect the gradient benefit.
+- **In 2D the friction cone is exact.** It degenerates to a wedge with
+  two edges, so there is no polygonalization and none of the
+  direction-dependent artefacts 3D engines pay for — already noted in
+  `penalty_contact.md`, and it applies to the solve as much as to the
+  penalty law.
+
+The other win, larger for anything that trains on this, is the timestep:
+penalty needs `dt ≈ 5e-4` to resolve a bounce, an NCP solve runs at
+`1e-2`, with exact non-penetration and stable stacking.
+
+**Joints ship here too**, as bilateral rows in the same solve. A
+bilateral constraint and a contact constraint land in the same linear
+algebra, so building the solver is most of building joints — and they
+come out *exact* rather than held to `error = F/k_j`, with no timestep
+penalty. That also makes 2.0 the release where the classic 2D benchmarks
+(CartPole, Acrobot, Hopper) become possible and well-behaved at the same
+time, which is a far larger visible jump than "the same scene with better
+contact."
+
+2.0 is therefore three deliverables — solver, IFT gradients, joints — and
+that is a genuine risk of a release that never lands. The mitigation is
+this repo's usual discipline applied *inside* the version number rather
+than between versions: contact solve green, then IFT gradients green,
+then bilateral rows green. Sequence it that way when it starts.
+
+### 3.0 — parallelism
+
+CUDA, pursued as an explicit learning goal rather than because a
+benchmark demanded it. Three constraints, worth recording now because two
+of them reach back into 1.0:
+
+- **Across scenes, not within one.** A 2D scene with ten bodies cannot
+  saturate a GPU. The parallelism that pays is a batch of independent
+  scenes — which is why 1.0's API takes a batch.
+- **CPU threads first.** A thread pool over scenes is roughly a day of
+  work, captures most of the win, stays deterministic, and proves out the
+  batched shape a GPU backend would need anyway.
+- **Determinism is in tension with the GPU.** "Same input, same binary,
+  same output, bit for bit" is hard when reductions and atomics are
+  order-dependent. Either deterministic reductions get built, or the
+  invariant gets narrowed — consciously, and written down here when it
+  happens.
+
+### The benchmark, now overdue
+
+`benchmarks/` is empty, and four performance questions have accumulated
+with nothing to answer them:
+
+- detection allocating several vectors per call
+- `∂F/∂Q` dense when the contact graph is sparse
+- the adjoint's `O(B²)` matvec on a matrix that is block-diagonal
+  whenever bodies are not touching
+- `penalty_forces_system_jacobian` calling five detection entry points
+  per pair, each recomputing `ComputePairGeometry` from scratch, with the
+  last two rebuilding jets the middle two just built
+
+Each was deferred with "when a benchmark says it matters." Several
+decisions now wait on the answer, so it has stopped being optional.
+
+## Note on joints: deferred into 2.0's solve
 
 A joint is a **bilateral** constraint `c(q) = 0` — an equality, with a
 force that pushes or pulls whatever is needed. Contact fitted the
@@ -123,50 +220,76 @@ anchor points, fits the existing force path with zero structural change)
 and a **bilateral constraint solve** (`(J_c M⁻¹ J_cᵀ)λ = …`, exact, but
 a solve in the update loop).
 
-The number that decides it: penalty joints hold to `error = F/k_j`, so a
-pendulum at ~10 N wants `k_j ≈ 10⁴` and works at the contact timestep,
-while a walker landing at ~500 N wants `5×10⁵` and roughly `dt = 10⁻⁴`.
-That is **10× more steps than contact alone** — real, and not
-disqualifying.
+The number that used to decide it: penalty joints hold to
+`error = F/k_j`, so a pendulum at ~10 N wants `k_j ≈ 10⁴` and works at
+the contact timestep, while a walker landing at ~500 N wants `5×10⁵` and
+roughly `dt = 10⁻⁴`. That is **10× more steps than contact alone**.
 
-Penalty first, because both approaches need the same `c(q)` and
-`J_c = ∂c/∂q`, so the geometry work carries over; because the step 9 jet
-already produces the Hessian the force Jacobian needs; and because it
-tells us empirically whether the stiffness limit bites for the tasks that
-actually get built.
+**The plan was penalty joints first, and that is now dropped.** Not
+deferred within 1.0 — dropped. The whole case for building them was that
+they were cheap and would unblock the API, and both halves fell over:
 
-Worth correcting one thing if it comes up: a bilateral solve is **much
-easier than the deferred NCP work below**, not a back door to it. No
-complementarity, no active set, no disjunction — it is a linear solve,
-its IFT gradient is textbook, and it is *smooth*, so none of the contact
-gradient pathology applies.
+- The API doesn't need them. A data-driven scene absorbs a `joints`
+  vector as an added field, so binding before joints exist costs a
+  recompile, not a redesign. The API decision that *is* expensive to
+  reverse is the batch dimension, which has nothing to do with joints.
+- They would be replaced almost immediately by 2.0's solver, after
+  imposing that 10× timestep cost on precisely the articulated systems
+  they exist to enable — right before 3.0, whose entire purpose is
+  throughput.
 
-## Deferred: NCP, IFT gradients, formulation swapping
+Building something you already know you will delete, which also makes the
+simulator slower in the meantime, is not a milestone.
 
-These were steps 6–8 of the original plan. They are **future ideas, not
-current work**, and nothing should be built in anticipation of them:
+So joints land in 2.0, as bilateral rows in the contact solve. Nothing is
+lost by waiting: both approaches need the same `c(q)` and
+`J_c = ∂c/∂q`, so the geometry work is identical whenever it happens, and
+the step 9 jet already produces the Hessian either form would need.
 
-- **Velocity-level NCP contact solver.** Contact as a complementarity
-  constraint solved per step rather than a force — exact non-penetration
-  instead of penalty's sub-millimetre sink.
-- **IFT gradients through the contact solve**, in the style of Dojo.
-  Required because you cannot chain-rule through a solver; this is what
-  would make an NCP formulation differentiable at all.
-- **Formulation swapping** — running the same scenario through penalty
-  and through NCP.
+Scope when it arrives: **revolute only to start.** It is what every 2D
+benchmark needs, and prismatic and weld are the same machinery with a
+different `c(q)`.
 
-Why deferred: the eventual comparison is only measurable once there is a
-control/RL stack to measure it *with*. Building a second formulation
-first produces something with nothing to compare on. Note also that
-penalty and NCP are different **update rules**, not interchangeable force
-laws — penalty is a force, NCP is a post-force projection — so
-"swapping" was never going to be a plug-in interface, and no abstraction
-should be built pretending otherwise.
+One thing worth keeping straight when 2.0 starts: a bilateral solve is
+**much easier than the contact one**, not a back door to it. No
+complementarity, no active set, no disjunction — a linear solve, a
+textbook IFT gradient, and *smooth*, so none of the contact gradient
+pathology applies. Doing joints after the contact solver is doing the
+easy half second.
 
-What keeps the door open is step 6's seam, not any amount of generality.
-Revisit when a consumer repo can actually train something and the
-question "does the contact model change what it learns" becomes a
-measurement rather than a guess.
+## Penalty stays; modularity does not
+
+2.0 replaces penalty contact as the **default**, not as the only thing in
+the repository. Penalty keeps its entry points and its tests.
+
+Three reasons, none of which is generality:
+
+- It is the **validation baseline**. When the solver produces a
+  trajectory nobody believes, "does penalty at a tiny timestep agree?" is
+  the most useful question available, and there is no substitute for it.
+- IFT gradients are **much harder to finite-difference** than force-law
+  gradients, because the solve carries its own tolerance floor. Keeping a
+  formulation whose derivatives are already validated against the actual
+  forward function is worth real money during 2.0.
+- It is already written, already green, and costs nothing to leave alone.
+
+**What is not being built is a formulation abstraction.** No interface,
+no runtime switch, no plugin, no common base that penalty and NCP both
+implement. Penalty is a force; an NCP solve is a post-force projection.
+They are different **update rules**, not interchangeable force laws, and
+any abstraction over them would be pretending otherwise. An earlier plan
+listed "formulation swapping" as a feature; it was never going to be one,
+and it is now explicitly dropped rather than merely deferred.
+
+Concretely: two named entry points, in the same spirit as `step_body` /
+`step_system`. A caller picks a formulation by calling it, and reading a
+call site tells you which one is running. That is the whole mechanism. If
+a change starts introducing a type that both formulations satisfy, it has
+gone wrong.
+
+What keeps the seam honest is step 6 — integration separated from force
+assembly — and nothing else. No further generality is needed and none
+should be added.
 
 ## Architecture
 
@@ -253,7 +376,7 @@ grip/
   demos/         raylib, gated behind GRIP_BUILD_DEMOS
   docs/
     derivations/ the math, in Markdown + LaTeX
-  benchmarks/    empty; see the note under the build order
+  benchmarks/    empty; see the note under the release plan
   CMakeLists.txt
 ```
 
@@ -326,9 +449,9 @@ in the repo.
 
 - Add abstraction layers, plugin systems, or generality no current test
   needs. Elegance that doesn't unlock a measurement is wasted effort.
-- Build toward the deferred NCP work. The seam in step 6 is the whole
-  hedge; nothing else should be shaped by a formulation that doesn't
-  exist.
+- Build toward 2.0 or 3.0 while 1.0 is unfinished. Step 6's seam and the
+  batched API shape are the whole hedge; nothing else should be shaped by
+  a formulation or a backend that doesn't exist yet.
 - Optimize before a benchmark shows it matters.
 - Implement control algorithms, policies, or training loops here.
 - Reintroduce research framing into the codebase or its docs.
@@ -338,8 +461,14 @@ in the repo.
 
 If a session drifts toward architecture astronomy, research positioning,
 or features that aren't the next numbered step, say so and point back to
-the build order. Right now that step is 10: revolute joints as a penalty
-force law, on a green suite, before the API surface gets bound.
+the release plan. Right now that step is 10: a batched public API and
+Python bindings, over the physics that already exists and on a green
+suite. No new physics belongs in 1.0.
+
+2.0 and 3.0 are written down so they aren't re-litigated, and so 1.0's
+API doesn't foreclose them — **not** so they get built early. Nothing
+should be shaped in anticipation of the NCP solve beyond step 6's seam,
+and nothing in anticipation of CUDA beyond the batched API shape.
 
 Keep this file current as steps land. It went stale once already —
 rewritten at the replan, then left claiming step 6 was next while 6
