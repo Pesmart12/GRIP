@@ -1,0 +1,2 @@
+add_executable(grip_baseline_benchmark baseline.cpp)
+target_link_libraries(grip_baseline_benchmark PRIVATE grip_core)

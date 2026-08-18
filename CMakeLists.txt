@@ -35,6 +35,7 @@ enable_testing()
 
 add_subdirectory(src)
 add_subdirectory(tests)
+add_subdirectory(benchmarks)
 
 # Off by default would be the right choice once anything links this as a
 # library -- a physics dependency should not drag in a window toolkit.
