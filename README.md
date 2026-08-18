@@ -26,8 +26,8 @@ Working today:
 | Gradients | per-step, plus full-rollout via a reverse-mode adjoint sweep |
 | Tests | 113, covering finite-difference validation and structural invariants |
 
-Not there yet: **joints** (every body is free-floating with a wrench at
-its centre of mass), a stable public API, and Python bindings. See the
+Not there yet: a **stable public API** and Python bindings, and **joints**
+(every body is free-floating with a wrench at its centre of mass). See the
 roadmap below.
 
 ## Example
@@ -155,6 +155,8 @@ exactly on an instance of it, which the tests pin rather than avoid.
 
 ## Roadmap
 
+Built:
+
 - [x] Symplectic Euler integrator, analytic Jacobians
 - [x] Multiple bodies, block-diagonal system Jacobian
 - [x] Contact detection against a static half-plane
@@ -163,22 +165,38 @@ exactly on an instance of it, which the tests pin rather than avoid.
 - [x] Rollout gradients via an adjoint sweep
 - [x] Coulomb friction, in the penalty formulation
 - [x] Body-body contact, with friction
-- [ ] Public API and Python bindings
 
-**Open, and not yet on the list: joints.** Every body here is
-free-floating with a wrench at its centre of mass, which covers a lot —
-balancing, hopping, pushing, stacking — but not articulated systems.
-CartPole, Acrobot, Hopper and Walker all need bilateral constraints, and
-faking them with stiff springs would undo the energy and stability
-properties the contact work is built on.
+Planned, in three releases:
 
-Deferred, deliberately: a velocity-level NCP contact solver, implicit-
-function-theorem gradients through that solve, and running the same
-scenario through both formulations. Those are future ideas, not current
-work — the comparison only becomes measurable once something can be
-trained on top, and penalty and NCP are different *update rules* rather
-than interchangeable force laws, so there was never a plug-in interface
-to build.
+- [ ] **1.0** — public API and Python bindings, batched over scenes. No
+  new physics; this release is about making what already exists callable.
+- [ ] **2.0** — a velocity-level NCP contact solve with
+  implicit-function-theorem gradients, replacing penalty as the default,
+  plus joints as bilateral constraints in that same solve.
+- [ ] **3.0** — parallelism across scenes.
+
+**Why NCP for 2.0.** Penalty ties together two knobs that ought to be
+independent: the stiffness that makes contact behave well is the same
+stiffness that makes the gradient discontinuous, and no amount of tuning
+escapes it. A solve with a central-path relaxation separates them —
+non-penetration is exact whatever the relaxation is, and the relaxation
+then controls only gradient smoothness. It also runs at `dt = 1e-2`
+rather than `5e-4`, with stable stacking.
+
+**Why joints wait for it.** Every body here is free-floating with a
+wrench at its centre of mass, which covers a lot — balancing, pushing,
+stacking, sliding — but not articulated systems. CartPole, Acrobot and
+Hopper need bilateral constraints, and a bilateral constraint lands in
+the same linear algebra as a contact constraint. Building the solve first
+means joints come out exact, rather than held together by stiff springs
+that would undo the energy and stability properties the contact work
+rests on.
+
+Penalty contact does not go away when NCP arrives; it stays as the
+validation baseline. What is *not* planned is an abstraction over the
+two. Penalty is a force and an NCP solve is a post-force projection —
+different *update rules* rather than interchangeable force laws — so
+there was never a plug-in interface to build.
 
 ## Scope
 
