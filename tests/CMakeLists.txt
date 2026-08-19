@@ -9,6 +9,7 @@ add_executable(grip_unit_tests
   unit/test_pair_detection.cpp
   unit/test_penalty_force.cpp
   unit/test_rollout.cpp
+  unit/test_scene.cpp
 )
 target_link_libraries(grip_unit_tests PRIVATE grip_core GTest::gtest_main)
 gtest_discover_tests(grip_unit_tests)

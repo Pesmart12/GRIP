@@ -370,13 +370,14 @@ grip/
     dynamics/    mass matrices, forces, integrator
     contact/     detection (half-plane and polygon-polygon), formulations
     gradient/    rollout / adjoint path
+    api/         scene description and batched entry points (step 10)
   tests/
     unit/        per-component tests
     validation/  finite-difference and conservation checks
   demos/         raylib, gated behind GRIP_BUILD_DEMOS
   docs/
     derivations/ the math, in Markdown + LaTeX
-  benchmarks/    empty; see the note under the release plan
+  benchmarks/    baseline throughput; see benchmarks/README.md
   CMakeLists.txt
 ```
 
