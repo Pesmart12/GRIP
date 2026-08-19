@@ -44,3 +44,10 @@ option(GRIP_BUILD_DEMOS "Build the raylib demo (fetches raylib)" ON)
 if(GRIP_BUILD_DEMOS)
   add_subdirectory(demos)
 endif()
+
+# The point of step 10. Needs Python development headers; configure with
+# -DPython_EXECUTABLE=<path> when Python is not on PATH.
+option(GRIP_BUILD_BINDINGS "Build the Python bindings (fetches pybind11)" ON)
+if(GRIP_BUILD_BINDINGS)
+  add_subdirectory(bindings)
+endif()

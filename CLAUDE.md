@@ -109,7 +109,16 @@ continues from the nine already built.
     signature change. Joints land in 2.0, and this is what keeps that
     from forcing a rebind.
 
-Step 10 is the current milestone.
+Step 10 landed in three pieces: `src/api/scene.hpp` (the scene description
+and the batched array layouts), `src/api/simulate.*` (batched step,
+rollout and adjoint), and `bindings/` (pybind11, numpy in and out). 132
+tests green.
+
+**What is left before 1.0 is honestly done: packaging.** The module is
+importable only by pointing `PYTHONPATH` at the build directory. A
+`pyproject.toml` with scikit-build-core, so a consumer can
+`pip install -e .`, is the remaining work — small, unglamorous, and the
+difference between a library and a build artefact.
 
 **Joints used to be step 10, and are now deferred into 2.0.** The reason
 they sat in front of the API was that they change scene construction —
@@ -333,8 +342,22 @@ Settled unless explicitly reopened:
   scene construction data-driven, and don't require a caller to
   understand the integrator's internals to run a rollout.
 
-New dependencies beyond Eigen, GoogleTest, and (later) pybind11 need
-discussion first. **raylib** is in, for the demo only, behind
+New dependencies beyond Eigen, GoogleTest and pybind11 need discussion
+first.
+
+**pybind11 was reconsidered against nanobind at step 10 and kept.** The
+baseline benchmark had just made call overhead a live concern, and
+nanobind — same author, C++17, several times cheaper per call — is the
+obvious answer to that. It was kept anyway, because the concern dissolves
+once the API crosses the boundary per *control* step rather than per
+integration step: at that call frequency both libraries' overhead is
+noise against the physics. What pybind11 buys instead is a decade of
+answers to the question that actually costs time, which is why a
+conversion is not doing what you expected. The decision is cheap to
+reverse precisely because the logic lives in `src/api/` and `bindings/`
+is mechanical. **Revisit when 3.0 wants to hand a GPU buffer straight to
+a learning framework** — nanobind speaks DLPack natively and pybind11
+does not, and that is a real advantage rather than a hypothetical one. **raylib** is in, for the demo only, behind
 `GRIP_BUILD_DEMOS` — it is fetched and linked by `demos/` and by nothing
 else. That option defaults ON while there are no consumers; flip it OFF
 at the bindings step, since a physics library should not drag a window
@@ -378,10 +401,13 @@ grip/
   docs/
     derivations/ the math, in Markdown + LaTeX
   benchmarks/    baseline throughput; see benchmarks/README.md
+  bindings/      pybind11 module, gated behind GRIP_BUILD_BINDINGS
   CMakeLists.txt
 ```
 
-`bindings/` arrives with step 10.
+`bindings/` holds the pybind11 module and its Python test. Configure with
+`-DPython_EXECUTABLE=<path>` when Python is not on PATH; `PYBIND11_FINDPYTHON`
+is on, so that variable is honoured rather than quietly ignored.
 
 ## Testing
 

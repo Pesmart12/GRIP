@@ -24,11 +24,12 @@ Working today:
 | Contact | convex polygon against a static half-plane, and against other polygons |
 | Contact model | penalty — clamped Kelvin–Voigt spring-damper with a Coulomb friction cone |
 | Gradients | per-step, plus full-rollout via a reverse-mode adjoint sweep |
-| Tests | 113, covering finite-difference validation and structural invariants |
+| Python | batched over independent environments, numpy in and out |
+| Tests | 132, covering finite-difference validation and structural invariants |
 
-Not there yet: a **stable public API** and Python bindings, and **joints**
-(every body is free-floating with a wrench at its centre of mass). See the
-roadmap below.
+Not there yet: **packaging** (the module imports from the build directory,
+not from `pip`), and **joints** — every body is free-floating with a wrench
+at its centre of mass. See the roadmap below.
 
 ## Example
 
@@ -69,16 +70,60 @@ GRIP never sees your cost function. You supply its partial derivatives —
 the seeds — and get total derivatives back. A cost is a task definition,
 and tasks belong to whoever is posing them.
 
+## From Python
+
+The same rollout and gradients, batched over independent environments.
+Arrays are `(environments, bodies, 6)` for state and
+`(steps, environments, bodies, 3)` for controls — the last state axis is
+`(x, y, θ, vx, vy, ω)`, which is the C++ packing convention viewed as an
+array rather than a translation of it.
+
+```python
+import numpy as np
+import grip
+
+scene = grip.Scene(
+    params=[grip.RigidBodyParams(mass=1.0, inertia=1.0 / 6.0)],
+    shapes=[grip.BodyShape([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]])],
+    plane=grip.HalfPlane(normal=[0.0, 1.0], offset=0.0),
+    penalty=grip.PenaltyParams(stiffness=1e4, damping=50.0),
+    dt=2e-4,
+)
+
+envs, steps = 64, 300
+initial = np.zeros((envs, 1, 6))
+initial[:, 0, 1] = np.linspace(1.0, 2.0, envs)      # a different drop height each
+controls = np.zeros((steps, envs, 1, 3))
+
+# 300 control steps of 10 integration steps each: one boundary crossing, not 3000.
+trajectory = grip.rollout_batch([scene] * envs, initial, controls, substeps=10)
+
+# Gradient of final height w.r.t. the initial state and every control.
+dl_dZ = np.zeros_like(trajectory)
+dl_dZ[-1, :, 0, 1] = 1.0
+dJ_dZ0, dJ_dU = grip.adjoint_batch([scene] * envs, trajectory, controls, 10, dl_dZ, np.zeros_like(controls))
+```
+
+Every environment carries its own `Scene`, so masses, shapes, ground
+angle, contact parameters and gravity can all be randomized across a
+batch. Only the body count has to match.
+
 ## Building
 
-Needs a C++20 compiler and CMake 3.20+. Eigen and GoogleTest are fetched
-automatically; there are no other dependencies.
+Needs a C++20 compiler and CMake 3.20+. Eigen, GoogleTest and pybind11
+are fetched automatically; Python development headers are the only thing
+you need installed.
 
 ```
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build
 ```
+
+Add `-DPython_EXECUTABLE=<path>` if Python is not on `PATH`, or
+`-DGRIP_BUILD_BINDINGS=OFF` to skip them. Benchmarks want a Release
+build — unoptimized Eigen is slower by more than an order of magnitude,
+and the benchmark says so loudly if you forget.
 
 ## What's in the box
 
@@ -88,9 +133,12 @@ src/
   dynamics/    mass matrix, forces, integrator
   contact/     detection (half-plane and polygon-polygon), penalty formulation
   gradient/    rollout and adjoint sweep
+  api/         scene description, batched entry points
 tests/
   unit/        per-component
   validation/  finite-difference and conservation checks
+bindings/      pybind11 module
+benchmarks/    baseline throughput
 docs/
   derivations/ the maths, in Markdown + LaTeX
 ```
@@ -170,6 +218,7 @@ Planned, in three releases:
 
 - [ ] **1.0** — public API and Python bindings, batched over scenes. No
   new physics; this release is about making what already exists callable.
+  The API and the bindings are in; packaging (`pip install -e .`) is not.
 - [ ] **2.0** — a velocity-level NCP contact solve with
   implicit-function-theorem gradients, replacing penalty as the default,
   plus joints as bilateral constraints in that same solve.
