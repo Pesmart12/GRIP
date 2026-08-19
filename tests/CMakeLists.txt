@@ -15,6 +15,7 @@ target_link_libraries(grip_unit_tests PRIVATE grip_core GTest::gtest_main)
 gtest_discover_tests(grip_unit_tests)
 
 add_executable(grip_validation_tests
+  validation/test_batched_api.cpp
   validation/test_contact_boundary.cpp
   validation/test_contact_jacobians.cpp
   validation/test_energy_behavior.cpp

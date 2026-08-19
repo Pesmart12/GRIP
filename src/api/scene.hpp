@@ -123,6 +123,121 @@ inline void write_environment_state(StateBatch& batch, std::size_t environment, 
 }
 
 
+// Values per body in a control wrench: (fx, fy, tau).
+inline constexpr std::size_t kControlValuesPerBody = 3;
+
+
+// Control wrenches for a batched rollout, laid out as
+// (steps, environments, bodies, 3) row-major.
+//
+// Indexed by *control* step, not by integration step. One entry is held
+// constant across however many substeps the caller asks for -- a zero-order
+// hold, which is what a policy running at a fixed control rate above a finer
+// integration rate actually does. The substep count is where penalty
+// contact's small timestep goes, and keeping it out of this array is what
+// stops a caller from having to materialize twenty identical wrenches.
+struct ControlBatch {
+  std::size_t steps = 0;
+  std::size_t environments = 0;
+  std::size_t bodies = 0;
+  std::vector<double> values;
+};
+
+
+inline std::size_t control_batch_offset(const ControlBatch& batch, std::size_t step, std::size_t environment, std::size_t body) {
+  return kControlValuesPerBody * ((step * batch.environments + environment) * batch.bodies + body);
+}
+
+
+inline ControlBatch make_control_batch(std::size_t steps, std::size_t environments, std::size_t bodies) {
+  ControlBatch batch;
+  batch.steps = steps;
+  batch.environments = environments;
+  batch.bodies = bodies;
+  batch.values.assign(steps * environments * bodies * kControlValuesPerBody, 0.0);
+  return batch;
+}
+
+
+inline std::vector<Eigen::Vector3d> read_environment_control(const ControlBatch& batch, std::size_t step, std::size_t environment) {
+  std::vector<Eigen::Vector3d> controls(batch.bodies);
+  for (std::size_t body = 0; body < batch.bodies; ++body) {
+    const std::size_t offset = control_batch_offset(batch, step, environment, body);
+    controls[body] = Eigen::Vector3d(batch.values[offset + 0], batch.values[offset + 1], batch.values[offset + 2]);
+  }
+  return controls;
+}
+
+
+inline void write_environment_control(ControlBatch& batch, std::size_t step, std::size_t environment, const std::vector<Eigen::Vector3d>& controls) {
+  for (std::size_t body = 0; body < batch.bodies; ++body) {
+    const std::size_t offset = control_batch_offset(batch, step, environment, body);
+    batch.values[offset + 0] = controls[body].x();
+    batch.values[offset + 1] = controls[body].y();
+    batch.values[offset + 2] = controls[body].z();
+  }
+}
+
+
+// States over a rollout, laid out as (steps + 1, environments, bodies, 6).
+//
+// One state per *control* step, plus the initial one -- the same indexing as
+// ControlBatch, so a learner computing rewards at control frequency reads
+// this without striding. States between control steps are not recorded: the
+// backward sweep rebuilds them by re-running the substeps, which is the same
+// recompute-rather-than-tape trade docs/derivations/adjoint.md already makes
+// one level up, and it keeps this buffer smaller by the substep count.
+//
+// This is the object contiguity was for. At the horizons a first-order
+// learner uses it is tens of megabytes, and a vector of vectors of
+// RigidBodyState would have to be copied to reach numpy.
+struct TrajectoryBatch {
+  std::size_t steps = 0;
+  std::size_t environments = 0;
+  std::size_t bodies = 0;
+  std::vector<double> values;
+};
+
+
+inline std::size_t trajectory_batch_offset(const TrajectoryBatch& batch, std::size_t step, std::size_t environment, std::size_t body) {
+  return kStateValuesPerBody * ((step * batch.environments + environment) * batch.bodies + body);
+}
+
+
+inline TrajectoryBatch make_trajectory_batch(std::size_t steps, std::size_t environments, std::size_t bodies) {
+  TrajectoryBatch batch;
+  batch.steps = steps;
+  batch.environments = environments;
+  batch.bodies = bodies;
+  batch.values.assign((steps + 1) * environments * bodies * kStateValuesPerBody, 0.0);
+  return batch;
+}
+
+
+inline std::vector<RigidBodyState> read_trajectory_state(const TrajectoryBatch& batch, std::size_t step, std::size_t environment) {
+  std::vector<RigidBodyState> states(batch.bodies);
+  for (std::size_t body = 0; body < batch.bodies; ++body) {
+    const std::size_t offset = trajectory_batch_offset(batch, step, environment, body);
+    states[body].q = Eigen::Vector3d(batch.values[offset + 0], batch.values[offset + 1], batch.values[offset + 2]);
+    states[body].v = Eigen::Vector3d(batch.values[offset + 3], batch.values[offset + 4], batch.values[offset + 5]);
+  }
+  return states;
+}
+
+
+inline void write_trajectory_state(TrajectoryBatch& batch, std::size_t step, std::size_t environment, const std::vector<RigidBodyState>& states) {
+  for (std::size_t body = 0; body < batch.bodies; ++body) {
+    const std::size_t offset = trajectory_batch_offset(batch, step, environment, body);
+    batch.values[offset + 0] = states[body].q.x();
+    batch.values[offset + 1] = states[body].q.y();
+    batch.values[offset + 2] = states[body].q.z();
+    batch.values[offset + 3] = states[body].v.x();
+    batch.values[offset + 4] = states[body].v.y();
+    batch.values[offset + 5] = states[body].v.z();
+  }
+}
+
+
 // Throws rather than asserts, which is a deliberate exception to the project's
 // no-exceptions habit and worth being explicit about.
 //

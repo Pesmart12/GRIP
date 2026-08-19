@@ -1,4 +1,5 @@
 add_library(grip_core
+  api/simulate.cpp
   contact/detection.cpp
   contact/penalty.cpp
   dynamics/forces.cpp
