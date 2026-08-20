@@ -25,51 +25,13 @@ Working today:
 | Contact model | penalty — clamped Kelvin–Voigt spring-damper with a Coulomb friction cone |
 | Gradients | per-step, plus full-rollout via a reverse-mode adjoint sweep |
 | Python | batched over independent environments, numpy in and out |
+| Speed | 0.3 µs/step free, 3.3 µs in contact — faster than real time |
 | Tests | 132, covering finite-difference validation and structural invariants |
 
 Not there yet: **joints** — every body is free-floating with a wrench at
 its centre of mass. See the roadmap below.
 
-## Example
-
-```cpp
-#include "contact/half_plane.hpp"
-#include "contact/penalty.hpp"
-#include "core/rigid_body.hpp"
-#include "gradient/rollout.hpp"
-
-using namespace grip;
-
-// A unit square, one metre up, above the ground plane y >= 0.
-std::vector<RigidBodyState> initial(1);
-initial[0].q = Eigen::Vector3d(0.0, 1.2, 0.0);
-
-const std::vector<RigidBodyParams> params(1, RigidBodyParams{/*mass=*/1.0, /*inertia=*/1.0 / 6.0});
-const std::vector<BodyShape> shapes(1, BodyShape{{{-0.5, -0.5}, {0.5, -0.5}, {0.5, 0.5}, {-0.5, 0.5}}});
-const HalfPlane ground;
-const PenaltyParams penalty{/*stiffness=*/1.0e4, /*damping=*/50.0};
-
-const double dt = 2.0e-4;
-const std::vector<std::vector<Eigen::Vector3d>> controls(3000, {Eigen::Vector3d::Zero()});
-
-// Forward: 3001 states — 0.6 s of falling, landing, and bouncing.
-const auto trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, dt);
-
-// Backward: gradient of "final height" w.r.t. the initial state and every control.
-std::vector<SystemStateVector> dl_dZ(controls.size() + 1, SystemStateVector::Zero(6));
-dl_dZ.back() = SystemStateVector::Unit(6, 1);
-const std::vector<SystemControlVector> dl_dU(controls.size(), SystemControlVector::Zero(3));
-
-const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, ground, penalty, dl_dZ, dl_dU, dt);
-// gradients.dJ_dZ0     6-vector
-// gradients.dJ_dU[t]   3-vector per step
-```
-
-GRIP never sees your cost function. You supply its partial derivatives —
-the seeds — and get total derivatives back. A cost is a task definition,
-and tasks belong to whoever is posing them.
-
-## From Python
+## Installing
 
 ```
 pip install .          # or -e . to develop against it
@@ -85,7 +47,9 @@ the compiler on `PATH` at import time, and a missing toolchain would then
 turn an ordinary `import grip` into a confusing build failure. Reinstall
 after touching `src/`.
 
-The same rollout and gradients, batched over independent environments.
+## Example
+
+Rollout and gradients, batched over independent environments.
 Arrays are `(environments, bodies, 6)` for state and
 `(steps, environments, bodies, 3)` for controls — the last state axis is
 `(x, y, θ, vx, vy, ω)`, which is the C++ packing convention viewed as an
@@ -121,11 +85,76 @@ Every environment carries its own `Scene`, so masses, shapes, ground
 angle, contact parameters and gravity can all be randomized across a
 batch. Only the body count has to match.
 
+GRIP never sees your cost function. You supply its partial derivatives —
+the seeds — and get total derivatives back. A cost is a task definition,
+and tasks belong to whoever is posing them.
+
+`substeps` is the other half of the design. A policy runs at a fixed
+control rate while penalty contact needs a much finer integration step,
+so one call advances many — a control step of 10 substeps crosses the
+language boundary once instead of ten times. See
+[Performance](#performance) for why that matters.
+
+## From C++
+
+The same functions, without the array conversion:
+
+```cpp
+#include "api/scene.hpp"
+#include "api/simulate.hpp"
+
+using namespace grip;
+
+Scene scene;
+scene.params.assign(1, RigidBodyParams{/*mass=*/1.0, /*inertia=*/1.0 / 6.0});
+scene.shapes.assign(1, BodyShape{{{-0.5, -0.5}, {0.5, -0.5}, {0.5, 0.5}, {-0.5, 0.5}}});
+scene.penalty = PenaltyParams{/*stiffness=*/1.0e4, /*damping=*/50.0};
+scene.dt = 2.0e-4;
+
+const std::vector<Scene> scenes(64, scene);
+StateBatch initial = make_state_batch(scenes.size(), 1);
+const ControlBatch controls = make_control_batch(300, scenes.size(), 1);
+
+TrajectoryBatch trajectory;
+rollout_batch(scenes, initial, controls, /*substeps=*/10, trajectory);
+
+TrajectoryBatch dl_dZ = make_trajectory_batch(controls.steps, scenes.size(), 1);
+dl_dZ.values[trajectory_batch_offset(dl_dZ, controls.steps, 0, 0) + 1] = 1.0;
+const RolloutGradientBatch gradients = adjoint_batch(scenes, trajectory, controls, 10, dl_dZ, make_control_batch(controls.steps, scenes.size(), 1));
+```
+
+Underneath these sit the per-scene functions the physics is actually
+written in — `step_system`, `rollout_system`, `adjoint_system` — which
+take parallel vectors rather than a `Scene` and know nothing about
+batching. They remain the single implementation both paths share.
+
+## Performance
+
+Measured, not claimed. Single-threaded, one scene at a time, on an
+i7-14700F at `dt = 5e-4`:
+
+| scene | forward | backward | wall-clock per simulated second |
+|---|---|---|---|
+| free flight, 1 body | 0.31 µs/step | 0.80 µs | 0.003 s |
+| resting pair, 2 bodies | 3.3 µs/step | 6.2 µs | 0.01 s |
+| stack, 10 bodies | 72 µs/step | 128 µs | 0.14 s |
+
+Three things fall out. Contact costs an order of magnitude over free
+flight — that gap is the pair path, SAT and clipping and the
+second-order jets. The backward sweep runs about 2× the forward step
+across every scene size, so recomputing Jacobians rather than taping them
+is not the expensive choice it looks like. And everything is faster than
+real time, at a timestep chosen for contact resolution rather than
+stability: **penalty's cost is the timestep, not the per-step work**,
+which is precisely what 2.0 buys back.
+
+Full method and caveats in [`benchmarks/README.md`](benchmarks/README.md).
+
 ## Building
 
-Needs a C++20 compiler and CMake 3.20+. Eigen, GoogleTest and pybind11
-are fetched automatically; Python development headers are the only thing
-you need installed.
+To work on GRIP itself rather than just use it. Needs a C++20 compiler
+and CMake 3.20+; Eigen and pybind11 are fetched automatically, and
+GoogleTest is fetched only when the tests are switched on.
 
 ```
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -133,10 +162,21 @@ cmake --build build
 ctest --test-dir build
 ```
 
-Add `-DPython_EXECUTABLE=<path>` if Python is not on `PATH`, or
-`-DGRIP_BUILD_BINDINGS=OFF` to skip them. Benchmarks want a Release
-build — unoptimized Eigen is slower by more than an order of magnitude,
-and the benchmark says so loudly if you forget.
+| option | default | |
+|---|---|---|
+| `GRIP_BUILD_TESTS` | ON | the C++ suite; fetches GoogleTest |
+| `GRIP_BUILD_BENCHMARKS` | ON | the baseline throughput benchmark |
+| `GRIP_BUILD_BINDINGS` | ON | the Python module; fetches pybind11 |
+| `GRIP_BUILD_DEMOS` | ON | the raylib demo; fetches raylib |
+
+All four go OFF for a wheel build. Add `-DPython_EXECUTABLE=<path>` if
+Python is not on `PATH` — `PYBIND11_FINDPYTHON` is on, so that variable
+is honoured rather than quietly ignored on a machine with more than one
+interpreter.
+
+**Build Release for anything you intend to time.** Unoptimized Eigen is
+slower by more than an order of magnitude; the benchmark refuses to be
+taken seriously if `NDEBUG` is absent and says so in the output.
 
 ## What's in the box
 
@@ -177,10 +217,27 @@ reference these rather than re-deriving inline.
 - **The adjoint stores states only.** Jacobians are pure functions of
   state, so the backward sweep rebuilds them rather than taping them — no
   operation graph, and a gradient-free rollout stays cheap.
+- **Environments in a batch never interact.** The public API is a loop
+  over independent scenes, serial today. That is why a batch is
+  bit-for-bit identical to running each scene alone, why determinism
+  survives whatever order they are stepped in, and why a parallel backend
+  can replace the loop body without disturbing anything above it.
+- **`Scene` is configuration, not a simulator.** State is passed in and
+  returned out, never held. Joints arrive in 2.0 as one more field on it,
+  which is a recompile rather than a change of call signature.
 
 ## Testing
 
-Beyond ordinary unit tests, three kinds of check earn their keep:
+132 tests, run by `ctest` — a C++ suite plus a Python one exercising the
+bindings against closed forms rather than against GRIP itself. Beyond
+ordinary unit tests, four kinds of check earn their keep:
+
+**Bit-for-bit equivalence.** A batch of identical environments must
+produce exactly what running each alone produces — not to a tolerance.
+Environments never interact, so that one assertion pins correctness and
+determinism together, and it is what will catch a parallel backend in 3.0
+if it ever reorders something it should not.
+
 
 **Finite differences.** Every analytic derivative is compared against
 central differences of the real forward function, written alongside the
