@@ -114,11 +114,22 @@ and the batched array layouts), `src/api/simulate.*` (batched step,
 rollout and adjoint), and `bindings/` (pybind11, numpy in and out). 132
 tests green.
 
-**What is left before 1.0 is honestly done: packaging.** The module is
-importable only by pointing `PYTHONPATH` at the build directory. A
-`pyproject.toml` with scikit-build-core, so a consumer can
-`pip install -e .`, is the remaining work — small, unglamorous, and the
-difference between a library and a build artefact.
+Packaging landed with it: `pyproject.toml` drives the existing CMake
+build through scikit-build-core, so `pip install .` and `cmake --build`
+cannot disagree about how the module is compiled. Tests, demos and
+benchmarks are switched off for a wheel build — GoogleTest is fetched
+*inside* the `GRIP_BUILD_TESTS` guard for exactly that reason, since
+otherwise `pip install` would clone a test framework for somebody who
+only wants to import the module.
+
+**1.0 is complete.** 2.0 is next, and the note below on penalty joints
+being dropped is the first thing to read before starting it.
+
+One deliberate omission: an editable install does **not** rebuild on C++
+changes. Enabling that would require the compiler on `PATH` at import
+time, and on a machine where the toolchain lives behind `vcvars` an
+ordinary `import grip` would turn into a confusing build failure.
+Reinstalling after touching `src/` is the cheaper failure mode.
 
 **Joints used to be step 10, and are now deferred into 2.0.** The reason
 they sat in front of the API was that they change scene construction —
@@ -403,6 +414,7 @@ grip/
   benchmarks/    baseline throughput; see benchmarks/README.md
   bindings/      pybind11 module, gated behind GRIP_BUILD_BINDINGS
   CMakeLists.txt
+  pyproject.toml scikit-build-core, wrapping the CMake build for pip
 ```
 
 `bindings/` holds the pybind11 module and its Python test. Configure with
@@ -488,9 +500,12 @@ in the repo.
 
 If a session drifts toward architecture astronomy, research positioning,
 or features that aren't the next numbered step, say so and point back to
-the release plan. Right now that step is 10: a batched public API and
-Python bindings, over the physics that already exists and on a green
-suite. No new physics belongs in 1.0.
+the release plan. **1.0 is done** — the batched API, the bindings and the
+packaging all landed on a green suite. The next milestone is 2.0's
+contact solve, and the sequence inside it matters: contact solve green,
+then IFT gradients green, then bilateral rows green. Three deliverables
+under one version number is the risk there, and shipping them in that
+order is the mitigation.
 
 2.0 and 3.0 are written down so they aren't re-litigated, and so 1.0's
 API doesn't foreclose them — **not** so they get built early. Nothing

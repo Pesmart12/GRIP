@@ -1,0 +1,44 @@
+# Packaging for the Python bindings.
+#
+# scikit-build-core drives the existing CMake build rather than replacing it,
+# so there is one build description and `pip install` and `cmake --build`
+# cannot disagree about how the module is compiled.
+#
+# The distribution is named `grip` because that is the import name and this is
+# not published. `grip` is taken on PyPI, so publishing would need a different
+# distribution name -- and only the distribution name, since the import name
+# is set by the CMake target's OUTPUT_NAME.
+
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "grip"
+version = "0.1.0"
+description = "A 2D differentiable rigid-body contact simulator"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.20"]
+
+[project.urls]
+Source = "https://github.com/Pesmart12/GRIP"
+
+[tool.scikit-build]
+cmake.version = ">=3.20"
+build-dir = "build/{wheel_tag}"
+
+# Release, always. The benchmark's own guard explains why for timing, but it
+# matters here for a plainer reason: an unoptimized Eigen is more than an
+# order of magnitude slower, and a wheel built without NDEBUG would hand a
+# consumer a simulator that looks broken rather than slow.
+cmake.build-type = "Release"
+
+# Everything a consumer does not need. Tests would clone GoogleTest, demos
+# would clone raylib and drag a window toolkit into an import, and the
+# benchmark is a developer tool.
+[tool.scikit-build.cmake.define]
+GRIP_BUILD_TESTS = "OFF"
+GRIP_BUILD_BENCHMARKS = "OFF"
+GRIP_BUILD_DEMOS = "OFF"
+GRIP_BUILD_BINDINGS = "ON"

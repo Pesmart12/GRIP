@@ -23,19 +23,30 @@ set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(eigen)
 
-FetchContent_Declare(
-  googletest
-  GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG v1.15.2
-)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
-
 enable_testing()
 
 add_subdirectory(src)
-add_subdirectory(tests)
-add_subdirectory(benchmarks)
+
+# Both default ON, and both go OFF for a wheel build. The tests matter most:
+# GoogleTest is fetched inside the guard rather than above it, so that
+# `pip install` does not clone a test framework for somebody who only wants
+# to import the module.
+option(GRIP_BUILD_TESTS "Build the C++ test suite (fetches GoogleTest)" ON)
+if(GRIP_BUILD_TESTS)
+  FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.15.2
+  )
+  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googletest)
+  add_subdirectory(tests)
+endif()
+
+option(GRIP_BUILD_BENCHMARKS "Build the baseline throughput benchmark" ON)
+if(GRIP_BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
+endif()
 
 # Off by default would be the right choice once anything links this as a
 # library -- a physics dependency should not drag in a window toolkit.

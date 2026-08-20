@@ -18,6 +18,14 @@ pybind11_add_module(grip_python grip_module.cpp)
 set_target_properties(grip_python PROPERTIES OUTPUT_NAME grip)
 target_link_libraries(grip_python PRIVATE grip_core)
 
+# SKBUILD is set only when scikit-build-core is driving the build for a
+# wheel. A plain `cmake --install` installs nothing, which is right: GRIP is
+# not yet meant to be installed as a system C++ library, and the header
+# layout that would need is a decision for whenever a C++ consumer appears.
+if(SKBUILD)
+  install(TARGETS grip_python DESTINATION .)
+endif()
+
 # Exercises the module through Python rather than through GoogleTest, because
 # the conversions and shape checks are the only thing here the C++ suite
 # cannot reach.

@@ -27,9 +27,8 @@ Working today:
 | Python | batched over independent environments, numpy in and out |
 | Tests | 132, covering finite-difference validation and structural invariants |
 
-Not there yet: **packaging** (the module imports from the build directory,
-not from `pip`), and **joints** — every body is free-floating with a wrench
-at its centre of mass. See the roadmap below.
+Not there yet: **joints** — every body is free-floating with a wrench at
+its centre of mass. See the roadmap below.
 
 ## Example
 
@@ -71,6 +70,20 @@ the seeds — and get total derivatives back. A cost is a task definition,
 and tasks belong to whoever is posing them.
 
 ## From Python
+
+```
+pip install .          # or -e . to develop against it
+```
+
+Needs a C++20 compiler; CMake and Ninja are fetched by the build if they
+are not already installed. Nothing else — tests, demos and benchmarks are
+all switched off for a wheel build, so `pip install` does not clone a test
+framework or a window toolkit.
+
+An editable install does **not** rebuild on C++ changes. That would need
+the compiler on `PATH` at import time, and a missing toolchain would then
+turn an ordinary `import grip` into a confusing build failure. Reinstall
+after touching `src/`.
 
 The same rollout and gradients, batched over independent environments.
 Arrays are `(environments, bodies, 6)` for state and
@@ -216,9 +229,9 @@ Built:
 
 Planned, in three releases:
 
-- [ ] **1.0** — public API and Python bindings, batched over scenes. No
+- [x] **1.0** — public API and Python bindings, batched over scenes. No
   new physics; this release is about making what already exists callable.
-  The API and the bindings are in; packaging (`pip install -e .`) is not.
+  Done: batched API, pybind11 bindings, and a pip-installable package.
 - [ ] **2.0** — a velocity-level NCP contact solve with
   implicit-function-theorem gradients, replacing penalty as the default,
   plus joints as bilateral constraints in that same solve.
