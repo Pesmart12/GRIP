@@ -282,7 +282,7 @@ TEST(PenaltyJacobians, DampedStepContractsPhaseSpaceVolumeByTheDelassusOperator)
   // and with df_c/dv = -b * J_A^T J_A, Sylvester's identity turns that
   // into det(Id - dt*b*Delassus) over the active contacts, where
   // Delassus = J_A * M^-1 * J_A^T is the inverse effective mass seen at
-  // the contacts -- the same operator step 6's solver is built around.
+  // the contacts -- the same operator 2.0's contact solve is built around.
   //
   // Expected value is assembled here from detection output and the mass
   // matrix, independently of the integrator's assembly.

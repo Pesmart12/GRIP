@@ -79,7 +79,7 @@ def test_last_axis_is_packs_ordering():
 def test_control_gradient_matches_the_worked_example():
     """adjoint.md's closed form for free flight.
 
-    Seeding the final height gives dJ/du_t = dt^2 * (H - t) / m for the
+    Seeding the final height gives d(objective)/du_t = dt^2 * (H - t) / m for the
     vertical component -- an early push has longer to act, so the earliest
     control has H times the influence of the last. Wrong sweep orientation
     reverses the ramp, which is the cheapest possible check that the
@@ -96,16 +96,16 @@ def test_control_gradient_matches_the_worked_example():
     dl_dZ[horizon, 0, 0, 1] = 1.0
     dl_dU = np.zeros_like(controls)
 
-    dJ_dZ0, dJ_dU = grip.adjoint_batch(scenes, trajectory, controls, 1, dl_dZ, dl_dU)
-    assert dJ_dZ0.shape == (1, 1, 6), dJ_dZ0.shape
-    assert dJ_dU.shape == (horizon, 1, 1, 3), dJ_dU.shape
+    dobjective_dZ0, dobjective_dU = grip.adjoint_batch(scenes, trajectory, controls, 1, dl_dZ, dl_dU)
+    assert dobjective_dZ0.shape == (1, 1, 6), dobjective_dZ0.shape
+    assert dobjective_dU.shape == (horizon, 1, 1, 3), dobjective_dU.shape
 
     # dq_H/dv_0 = H*dt, the shear composing with itself.
-    assert np.isclose(dJ_dZ0[0, 0, 4], horizon * dt), dJ_dZ0[0, 0]
-    assert np.isclose(dJ_dZ0[0, 0, 1], 1.0), dJ_dZ0[0, 0]
+    assert np.isclose(dobjective_dZ0[0, 0, 4], horizon * dt), dobjective_dZ0[0, 0]
+    assert np.isclose(dobjective_dZ0[0, 0, 1], 1.0), dobjective_dZ0[0, 0]
 
     for t in range(horizon):
-        assert np.isclose(dJ_dU[t, 0, 0, 1], dt * dt * (horizon - t)), t
+        assert np.isclose(dobjective_dU[t, 0, 0, 1], dt * dt * (horizon - t)), t
 
 
 def test_substeps_multiply_the_elapsed_time():

@@ -32,7 +32,7 @@ RolloutGradients adjoint_system(const std::vector<std::vector<RigidBodyState>>& 
   const auto num_bodies = static_cast<Eigen::Index>(params.size());
 
   RolloutGradients gradients;
-  gradients.dJ_dU.assign(horizon, SystemControlVector::Zero(3 * num_bodies));
+  gradients.dobjective_dU.assign(horizon, SystemControlVector::Zero(3 * num_bodies));
 
   // Terminal condition. Z_H sits in its own stage cost and in the constraint
   // that produced it, but in no constraint's dynamics, so the recursion has
@@ -46,7 +46,7 @@ RolloutGradients adjoint_system(const std::vector<std::vector<RigidBodyState>>& 
     // read off BEFORE the adjoint is stepped back. Using adjoint_t here is
     // the classic off-by-one: dimensionally sound, silently wrong, and only
     // a finite-difference check over the whole rollout catches it.
-    gradients.dJ_dU[t] = dl_dU[t] + jac.dZ_dF.transpose() * adjoint;
+    gradients.dobjective_dU[t] = dl_dU[t] + jac.dZ_dF.transpose() * adjoint;
     adjoint = dl_dZ[t] + jac.dZ_dZ.transpose() * adjoint;
   }
 
@@ -54,7 +54,7 @@ RolloutGradients adjoint_system(const std::vector<std::vector<RigidBodyState>>& 
   // bare term the way every later state does -- there is no constraint
   // before it. That missing term is exactly why the last thing the sweep
   // computes is the gradient rather than a condition forced to zero.
-  gradients.dJ_dZ0 = adjoint;
+  gradients.dobjective_dZ0 = adjoint;
   return gradients;
 }
 

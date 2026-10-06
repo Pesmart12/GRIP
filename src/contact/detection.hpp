@@ -123,10 +123,14 @@ using PairHessian = Eigen::Matrix<double, 6, 6>;
 // nothing is in contact, so detection cannot stay smooth the way
 // detect_contacts_body does.
 //
-// Otherwise one or two contacts: two when a face meets a face, one when
-// a vertex meets a face. The count changes discontinuously as a body
-// tips, which is one of three new non-smooth surfaces body-body contact
-// introduces. See docs/derivations/pair_detection.md.
+// Otherwise both surviving ends of the clipped incident edge -- two
+// contacts, or one when the clip collapses the edge to a single point.
+// Ends with a positive gap are kept: a box tilted onto a corner returns
+// two contacts, one penetrating and one above the face, and the force
+// law ignores the second. The number of *penetrating* contacts changes
+// discontinuously as a body tips, which is one of three new non-smooth
+// surfaces body-body contact introduces. See
+// docs/derivations/pair_detection.md.
 //
 // Vertices must wind counterclockwise, as BodyShape's do.
 std::vector<PairContact> detect_contacts_pair(const RigidBodyState& first, const BodyShape& first_shape, const RigidBodyState& second, const BodyShape& second_shape);

@@ -56,12 +56,12 @@ void rollout_batch(const std::vector<Scene>& scenes, const StateBatch& initial, 
 
 // Total derivatives of a caller-defined objective, batched.
 //
-// dJ_dZ0 is shaped like a StateBatch, dJ_dU like the ControlBatch that
+// dobjective_dZ0 is shaped like a StateBatch, dobjective_dU like the ControlBatch that
 // produced the trajectory -- so a learner reads gradients in exactly the
 // arrays it supplied controls in.
 struct RolloutGradientBatch {
-  StateBatch dJ_dZ0;
-  ControlBatch dJ_dU;
+  StateBatch dobjective_dZ0;
+  ControlBatch dobjective_dU;
 };
 
 
@@ -77,7 +77,7 @@ struct RolloutGradientBatch {
 // read the *same* wrench, so the control gradient accumulates across the
 // whole macro step rather than being read off once:
 //
-//   for k = substeps-1 .. 0:  dJ_dU[t] += dZ_dF_k^T . adjoint
+//   for k = substeps-1 .. 0:  dobjective_dU[t] += dZ_dF_k^T . adjoint
 //                             adjoint   = dZ_dZ_k^T . adjoint
 //
 // which is the same two lines as the single-step sweep, run inside the macro

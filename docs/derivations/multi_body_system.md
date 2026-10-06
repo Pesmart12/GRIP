@@ -29,7 +29,7 @@ one.
 Since no force couples body `i` to body `j`, `∂Z_{t+1}/∂Z_t` and
 `∂Z_{t+1}/∂U` are block-diagonal by construction: block `i` is exactly
 the per-body `StepJacobians` from step 2, placed at `(6i, 6i)` in
-`dZ_dZ` and `(6i, 3i)` in `dZ_dU`. Off-diagonal blocks are exactly zero —
+`dZ_dZ` and `(6i, 3i)` in `dZ_dF`. Off-diagonal blocks are exactly zero —
 not approximately, exactly, since nothing in the update for body `i`
 reads body `j`'s state or control at all. `test_integrator_system_jacobians.cpp`
 checks this directly, same pattern as the exact-zero gravity check in

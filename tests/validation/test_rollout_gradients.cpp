@@ -20,10 +20,10 @@ BodyShape UnitSquare() {
   return BodyShape{{{-0.5, -0.5}, {0.5, -0.5}, {0.5, 0.5}, {-0.5, 0.5}}};
 }
 
-// A deliberately linear objective: J = sum_t a_t . Z_t + sum_t b_t . U_t.
+// A deliberately linear objective: objective = sum_t a_t . Z_t + sum_t b_t . U_t.
 //
 // Linear in the trajectory, not in the parameters -- the dynamics are still
-// nonlinear once contact is active, so dJ/dZ0 genuinely depends on the path.
+// nonlinear once contact is active, so d(objective)/dZ0 genuinely depends on the path.
 // What linearity buys is that the seeds ARE a_t and b_t, with no chain rule
 // on the caller's side to get wrong, so a finite-difference disagreement can
 // only be the adjoint's fault.
@@ -100,11 +100,11 @@ void ExpectGradientsMatchFiniteDifference(const std::vector<RigidBodyState>& ini
     out(0) = Objective(perturbed, controls, dl_dZ, dl_dU);
     return out;
   };
-  const Eigen::MatrixXd fd_dJ_dZ0 = testutil::CentralDifferenceJacobianXd(objective_of_initial, PackSystem(initial));
+  const Eigen::MatrixXd fd_dobjective_dZ0 = testutil::CentralDifferenceJacobianXd(objective_of_initial, PackSystem(initial));
 
-  ASSERT_EQ(fd_dJ_dZ0.cols(), analytic.dJ_dZ0.size());
-  for (Eigen::Index i = 0; i < analytic.dJ_dZ0.size(); ++i) {
-    EXPECT_NEAR(analytic.dJ_dZ0(i), fd_dJ_dZ0(0, i), tolerance) << "dJ_dZ0 mismatch at " << i;
+  ASSERT_EQ(fd_dobjective_dZ0.cols(), analytic.dobjective_dZ0.size());
+  for (Eigen::Index i = 0; i < analytic.dobjective_dZ0.size(); ++i) {
+    EXPECT_NEAR(analytic.dobjective_dZ0(i), fd_dobjective_dZ0(0, i), tolerance) << "dobjective_dZ0 mismatch at " << i;
   }
 
   const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> objective_of_controls = [&](const Eigen::VectorXd& flat) {
@@ -114,13 +114,13 @@ void ExpectGradientsMatchFiniteDifference(const std::vector<RigidBodyState>& ini
     out(0) = Objective(perturbed, perturbed_controls, dl_dZ, dl_dU);
     return out;
   };
-  const Eigen::MatrixXd fd_dJ_dU = testutil::CentralDifferenceJacobianXd(objective_of_controls, FlattenSequence(controls));
+  const Eigen::MatrixXd fd_dobjective_dU = testutil::CentralDifferenceJacobianXd(objective_of_controls, FlattenSequence(controls));
 
   const auto per_step = static_cast<Eigen::Index>(3 * num_bodies);
   for (std::size_t t = 0; t < horizon; ++t) {
     for (Eigen::Index i = 0; i < per_step; ++i) {
       const Eigen::Index column = per_step * static_cast<Eigen::Index>(t) + i;
-      EXPECT_NEAR(analytic.dJ_dU[t](i), fd_dJ_dU(0, column), tolerance) << "dJ_dU mismatch at step " << t << ", component " << i;
+      EXPECT_NEAR(analytic.dobjective_dU[t](i), fd_dobjective_dU(0, column), tolerance) << "dobjective_dU mismatch at step " << t << ", component " << i;
     }
   }
 }
@@ -214,7 +214,7 @@ TEST(RolloutGradients, FreeFlightStateGradientMatchesClosedForm) {
     dl_dZ[horizon] = SystemStateVector::Unit(6, i);
     const std::vector<SystemControlVector> dl_dU(horizon, SystemControlVector::Zero(3));
 
-    full.row(i) = adjoint_system(trajectory, params, shapes, HalfPlane{}, PenaltyParams{}, dl_dZ, dl_dU, dt).dJ_dZ0.transpose();
+    full.row(i) = adjoint_system(trajectory, params, shapes, HalfPlane{}, PenaltyParams{}, dl_dZ, dl_dU, dt).dobjective_dZ0.transpose();
   }
 
   Eigen::Matrix<double, 6, 6> expected = Eigen::Matrix<double, 6, 6>::Identity();
@@ -257,14 +257,14 @@ TEST(RolloutGradients, FreeFlightControlGradientMatchesClosedForm) {
 
   for (std::size_t t = 0; t < horizon; ++t) {
     const double remaining = static_cast<double>(horizon - t);
-    EXPECT_NEAR(gradients.dJ_dU[t](1), dt * dt * remaining / body.mass, 1.0e-14) << "step " << t;
-    EXPECT_NEAR(gradients.dJ_dU[t](0), 0.0, 1.0e-15) << "step " << t;
-    EXPECT_NEAR(gradients.dJ_dU[t](2), 0.0, 1.0e-15) << "step " << t;
+    EXPECT_NEAR(gradients.dobjective_dU[t](1), dt * dt * remaining / body.mass, 1.0e-14) << "step " << t;
+    EXPECT_NEAR(gradients.dobjective_dU[t](0), 0.0, 1.0e-15) << "step " << t;
+    EXPECT_NEAR(gradients.dobjective_dU[t](2), 0.0, 1.0e-15) << "step " << t;
   }
 
   // The earliest control has H times the influence of the last one: early
   // pushes have longer to act.
-  EXPECT_NEAR(gradients.dJ_dU[0](1) / gradients.dJ_dU[horizon - 1](1), static_cast<double>(horizon), 1.0e-10);
+  EXPECT_NEAR(gradients.dobjective_dU[0](1) / gradients.dobjective_dU[horizon - 1](1), static_cast<double>(horizon), 1.0e-10);
 }
 
 TEST(RolloutGradients, AdjointDecouplesAcrossBodies) {
@@ -294,10 +294,10 @@ TEST(RolloutGradients, AdjointDecouplesAcrossBodies) {
 
   const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, ground, penalty, dl_dZ, dl_dU, dt);
 
-  EXPECT_FALSE(gradients.dJ_dZ0.head<6>().isZero(0.0)) << "body 0 should have picked up a gradient";
-  EXPECT_TRUE(gradients.dJ_dZ0.tail<6>().isZero(0.0)) << "body 1 is uncoupled and must stay at zero";
+  EXPECT_FALSE(gradients.dobjective_dZ0.head<6>().isZero(0.0)) << "body 0 should have picked up a gradient";
+  EXPECT_TRUE(gradients.dobjective_dZ0.tail<6>().isZero(0.0)) << "body 1 is uncoupled and must stay at zero";
   for (std::size_t t = 0; t < horizon; ++t) {
-    EXPECT_TRUE(gradients.dJ_dU[t].tail<3>().isZero(0.0)) << "body 1 control gradient at step " << t;
+    EXPECT_TRUE(gradients.dobjective_dU[t].tail<3>().isZero(0.0)) << "body 1 control gradient at step " << t;
   }
 }
 
@@ -333,7 +333,7 @@ TEST(RolloutGradients, TerminalSeedAloneReproducesTheJacobianProduct) {
     const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, ground, penalty, dl_dZ, dl_dU, dt);
 
     for (int j = 0; j < 6; ++j) {
-      EXPECT_NEAR(gradients.dJ_dZ0(j), product(i, j), 1.0e-12) << "row " << i << ", column " << j;
+      EXPECT_NEAR(gradients.dobjective_dZ0(j), product(i, j), 1.0e-12) << "row " << i << ", column " << j;
     }
   }
 }

@@ -115,12 +115,13 @@ than a 3×3 — the two call sites need different spellings of the same
 object (`.cwiseProduct()` against a vector operand, `.asDiagonal()` against
 a matrix one) and a vector converts to either.
 
-This stops being a throwaway convenience at step 6. The central object of a
-velocity-level contact solver is the Delassus operator `J M⁻¹ Jᵀ`, the
-effective mass seen at a contact point; every formulation compared in
-step 8 builds it. That `M⁻¹` is diagonal and constant is what keeps that
-assembly cheap and keeps its derivative with respect to `q` identically
-zero.
+This stops being a throwaway convenience once contact arrives. The
+central object of contact dynamics is the Delassus operator
+`J_A M⁻¹ J_Aᵀ`, the inverse effective mass seen at the contacts: penalty
+contact's stiffness limit and damping determinant are both measured in it
+(`penalty_contact.md`), and 2.0's velocity-level solve is built around
+it. That `M⁻¹` is diagonal and constant is what keeps that assembly cheap
+and keeps its derivative with respect to `q` identically zero.
 
 ## Control input
 
@@ -128,10 +129,11 @@ zero.
 the same space as `v`, so it plugs directly into `M⁻¹u` with no moment-arm
 computation inside the integrator. Actuator geometry (a force applied off
 the COM) is a modeling concern for a layer above the integrator, which
-converts `(offset, force) → (F, τ = r×F)` before it ever becomes `u`.
+converts an applied force and its offset from the COM into a wrench,
+torque = offset × force, before it ever becomes `u`.
 
-`u` is reserved for external/control input specifically. Contact impulses
-(step 6 onward) are computed separately and summed into the same velocity
+`u` is reserved for external/control input specifically. Contact forces
+(step 5 onward) are computed separately and summed into the same velocity
 update — same mathematical slot, different semantic bucket, not routed
 through `u`.
 
@@ -171,10 +173,10 @@ categorically different global behavior (see below).
 
 Note that under constant gravity alone, `v_{t+1}` is exactly the continuous
 solution — no discretization error, since acceleration is constant. `q_{t+1}`
-is not exact: the closed-form recursion from rest is
-`v_n = n·dt·a`, `q_n = dt²·a·n(n+1)/2`, which differs from the continuous
-`q(t) = q_0 + v_0 t + ½at²` by a term `~ ½·a·dt·t`, an `O(dt)` offset that
-grows linearly with time but shrinks with step size — ordinary first-order
+is not exact. Falling from rest, the vertical components after `t` steps
+are `v_t = −t·dt·g` and `q_t = −dt²·g·t(t+1)/2`, which differs from the
+continuous `−½·g·(t·dt)²` by `−½·g·dt·(t·dt)` — an `O(dt)` offset that
+grows linearly with elapsed time `t·dt` but shrinks with step size — ordinary first-order
 discretization error, not an oscillation or drift phenomenon, because
 constant gravity has no potential well and nothing periodic to compare
 against.
@@ -183,17 +185,18 @@ against.
 
 This is the property the integrator is actually chosen for, and it only
 shows up in a system with a restoring force — gravity alone doesn't
-exercise it. Consider the harmonic oscillator, `f(q) = -kq` (1D, mass `m`,
-`ω = √(k/m)`). Symplectic Euler's step is the linear map
+exercise it. Consider the harmonic oscillator, `f(x) = −kx` (1D, mass `m`,
+natural frequency `√(k/m)`). The frequency gets no symbol: `ω` is the
+angular velocity in `v`. Symplectic Euler's step is the linear map
 
 ```
-x_{n+1} = (1 - ω²dt²) x_n + dt v_n
-v_{n+1} = -ω²dt x_n + v_n
+x_{t+1} = (1 − (k/m)·dt²) x_t + dt v_t
+v_{t+1} = −(k/m)·dt x_t + v_t
 ```
 
 with `det = 1` exactly (a shear composition, not an approximation), and
-trace `2 - ω²dt²`. For `|ω·dt| < 2` the eigenvalues are a complex-conjugate
-pair with `|λ| = √det = 1` exactly. The map is an exact rotation in a
+trace `2 − (k/m)·dt²`. For `dt·√(k/m) < 2` the eigenvalues are a
+complex-conjugate pair whose magnitudes are both `√det = 1` exactly. The map is an exact rotation in a
 skewed coordinate system: the discrete trajectory sits on a fixed
 invariant ellipse in phase space forever. Energy computed in the ordinary
 `(x, v)` frame therefore oscillates within a bounded band around `E₀` for
@@ -203,11 +206,11 @@ the rollout runs.
 Plain explicit Euler on the same system is instead
 
 ```
-x_{n+1} = x_n + dt v_n
-v_{n+1} = -ω²dt x_n + v_n
+x_{t+1} = x_t + dt v_t
+v_{t+1} = −(k/m)·dt x_t + v_t
 ```
 
-with `det = 1 + ω²dt² > 1`. Eigenvalue magnitude is `√(1+ω²dt²) > 1` exactly,
+with `det = 1 + (k/m)·dt² > 1`. Eigenvalue magnitude is `√(1 + (k/m)·dt²) > 1` exactly,
 so every step scales the phase-space vector up — guaranteed exponential
 energy growth (spiral-out), regardless of how small `dt` is; a smaller
 `dt` only slows the growth rate, it doesn't remove it.
@@ -216,7 +219,7 @@ energy growth (spiral-out), regardless of how small `dt` is; a smaller
 the production `step_body`, using `u = -kq` recomputed from the
 current state each step (no new force law added to `src/`), and uses a
 locally-implemented explicit Euler as a negative control that must show
-growth by contrast. Practical implication carried forward: the `|ω·dt| < 2`
+growth by contrast. Practical implication carried forward: the `dt·√(k/m) < 2`
 stability bound will matter again once step 5 introduces a stiff contact
 spring — a large step size paired with a stiff `k` can push the discrete
 map outside this bound and the bounded-oscillation guarantee disappears.

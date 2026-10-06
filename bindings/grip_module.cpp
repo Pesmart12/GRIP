@@ -125,11 +125,11 @@ py::array_t<double> RolloutBatch(const std::vector<Scene>& scenes, const InputAr
 py::tuple AdjointBatch(const std::vector<Scene>& scenes, const InputArray& trajectory, const InputArray& controls, std::size_t substeps, const InputArray& dl_dZ, const InputArray& dl_dU) {
   RolloutGradientBatch gradients = grip::adjoint_batch(scenes, ToTrajectoryBatch(trajectory, "trajectory"), ToControlBatch(controls, "controls"), substeps, ToTrajectoryBatch(dl_dZ, "dl_dZ"), ToControlBatch(dl_dU, "dl_dU"));
 
-  const auto steps = static_cast<py::ssize_t>(gradients.dJ_dU.steps);
-  const auto environments = static_cast<py::ssize_t>(gradients.dJ_dZ0.environments);
-  const auto bodies = static_cast<py::ssize_t>(gradients.dJ_dZ0.bodies);
-  py::array_t<double> initial_state_gradient = ReleaseToNumpy(std::move(gradients.dJ_dZ0), {environments, bodies, 6});
-  py::array_t<double> control_gradient = ReleaseToNumpy(std::move(gradients.dJ_dU), {steps, environments, bodies, 3});
+  const auto steps = static_cast<py::ssize_t>(gradients.dobjective_dU.steps);
+  const auto environments = static_cast<py::ssize_t>(gradients.dobjective_dZ0.environments);
+  const auto bodies = static_cast<py::ssize_t>(gradients.dobjective_dZ0.bodies);
+  py::array_t<double> initial_state_gradient = ReleaseToNumpy(std::move(gradients.dobjective_dZ0), {environments, bodies, 6});
+  py::array_t<double> control_gradient = ReleaseToNumpy(std::move(gradients.dobjective_dU), {steps, environments, bodies, 3});
   return py::make_tuple(initial_state_gradient, control_gradient);
 }
 
@@ -190,7 +190,7 @@ PYBIND11_MODULE(grip, module) {
              "Roll every environment forward, recording one state per control step plus the initial one.\n\ninitial   (environments, bodies, 6)\ncontrols  (steps, environments, bodies, 3)\nreturns   (steps + 1, environments, bodies, 6)\n\nThe returned array views the simulator's own buffer without copying it.");
 
   module.def("adjoint_batch", &AdjointBatch, py::arg("scenes"), py::arg("trajectory"), py::arg("controls"), py::arg("substeps"), py::arg("dl_dZ"), py::arg("dl_dU"),
-             "Reverse-mode sweep over a trajectory from rollout_batch.\n\nGRIP never sees your objective. Supply its partials and receive total derivatives.\n\ndl_dZ     (steps + 1, environments, bodies, 6), d(stage cost)/d(state)\ndl_dU     (steps, environments, bodies, 3), d(stage cost)/d(control)\nreturns   (dJ_dZ0, dJ_dU) shaped like the initial state and the controls\n\nA terminal-only objective is the case where every dl_dZ entry but the last is zero.");
+             "Reverse-mode sweep over a trajectory from rollout_batch.\n\nGRIP never sees your objective. Supply its partials and receive total derivatives.\n\ndl_dZ     (steps + 1, environments, bodies, 6), d(stage cost)/d(state)\ndl_dU     (steps, environments, bodies, 3), d(stage cost)/d(control)\nreturns   (dobjective_dZ0, dobjective_dU) shaped like the initial state and the controls\n\nA terminal-only objective is the case where every dl_dZ entry but the last is zero.");
 
   module.attr("__version__") = "0.1.0";
 }

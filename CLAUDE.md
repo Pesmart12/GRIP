@@ -334,8 +334,10 @@ Settled unless explicitly reopened:
   `std::vector<BodyShape>`, indexed together. System state is
   `PackSystem`/`UnpackSystem`'s concatenation (body `i` at `[6i, 6i+6)`),
   built on the single-body convention above.
-- **The system Jacobian is built alongside every step, not deferred.**
-  It is exactly block-diagonal while bodies only touch static scenery —
+- **Every step function has a Jacobian function, written alongside it.**
+  Forward simulation computes states only; Jacobians are recomputed from
+  stored states, on demand, in the backward sweep. The system Jacobian is
+  exactly block-diagonal while bodies only touch static scenery —
   each diagonal block is the per-body Jacobian, and penalty contact
   against the plane only enriched those blocks. Body-body contact (step
   9) is the first thing that introduces genuine off-diagonal terms. See

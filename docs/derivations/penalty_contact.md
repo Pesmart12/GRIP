@@ -115,11 +115,11 @@ circle with a polygon and pay for it in direction-dependent artefacts.
 ### The friction angle is a slope you can walk on
 
 `arctan(μ)` is the steepest incline a body rests on. On a slope at angle
-`θ`, gravity splits into `mg·cos θ` pressing in and `mg·sin θ` pulling
-along, so sticking needs `mg·sin θ ≤ μ·mg·cos θ`, that is `tan θ ≤ μ`.
+`α`, gravity splits into `mg·cos α` pressing in and `mg·sin α` pulling
+along, so sticking needs `mg·sin α ≤ μ·mg·cos α`, that is `tan α ≤ μ`.
 
 Geometrically: for the body to sit still the contact force must exactly
-oppose gravity, so it must point straight up — which is `θ` away from the
+oppose gravity, so it must point straight up — which is `α` away from the
 surface normal. Equilibrium is possible precisely when that direction
 still fits inside the cone. Tilt past `arctan(μ)` and no admissible force
 can hold the body.
@@ -127,7 +127,7 @@ can hold the body.
 `μ = 0.5` gives 26.6°, which is why `test_penalty_force.cpp` checks 20°
 holds and 35° runs. That test tilts *gravity* rather than the plane — a
 box on a slope in vertical gravity is the same problem as a box on flat
-ground in gravity rotated by `θ` — which avoids rotating both the plane
+ground in gravity rotated by `α` — which avoids rotating both the plane
 and the body to match, and tests identical physics.
 
 ### Interior versus boundary
@@ -151,7 +151,11 @@ exact Coulomb friction is a complementarity problem.
 The `clamp` enforces `|βᵢ| ≤ μλᵢ` **exactly**, at every state, by
 construction. What is approximated is the *stick* condition: instead of
 `sᵢ = 0`, sticking becomes `sᵢ = −βᵢ/b_slip`. Hence creep — a body held
-on a slope drifts at `mg·sin θ / b_slip` forever.
+on a slope drifts forever. The friction holding it must total
+`mg·sin α`, shared among its sticking contacts, so a box resting on its
+two bottom corners drifts at `mg·sin α / (2·b_slip)`. (That is exact
+only while both corners stick; near the friction angle the lighter
+corner saturates first and the box creeps faster.)
 
 That is the same bargain as the normal direction, mirrored:
 
@@ -181,12 +185,13 @@ and a moment. Expanding `Jᵢ = [n_x, n_y, n·(pᵢ−c)^⊥]`:
 Jᵢᵀλᵢ = ( λᵢn_x , λᵢn_y , λᵢ·n·(pᵢ−c)^⊥ )
 ```
 
-The third component *is* the moment. With `r = pᵢ − c` and `F = λᵢn`, the
-2D cross product is `r_x F_y − r_y F_x = λᵢ(r_x n_y − r_y n_x)`, and
-`n·r^⊥ = n·(−r_y, r_x) = r_x n_y − r_y n_x`. Identical. So the moment arm
-never has to be handled separately — virtual work hands it over, and the
-same `Jᵀ` that will map multipliers to generalized forces in step 6 is
-already doing it here.
+The third component *is* the moment. The moment arm is `pᵢ − c` and the
+force is `λᵢn`, so the 2D cross product is
+`λᵢ·((pᵢ − c)_x n_y − (pᵢ − c)_y n_x)`, while
+`n·(pᵢ − c)^⊥ = (pᵢ − c)_x n_y − (pᵢ − c)_y n_x`. Identical. So the moment
+arm never has to be handled separately — virtual work hands it over, and
+the same `Jᵀ` that will map multipliers to generalized forces in 2.0's
+contact solve is already doing it here.
 
 Two consequences the code makes visible:
 
@@ -195,10 +200,11 @@ Two consequences the code makes visible:
   is the resultant argument from `contact_detection.md`: the dynamics fix
   the total and the center of pressure, not the individual forces. A flat
   resting box is statically indeterminate, and penalty contact sidesteps
-  that only because each spring answers to its own `dᵢ`. The NCP solver
-  in step 6 has to confront it directly.
-- **A contact directly below the COM produces no torque.** Then
-  `r = (0, −h)`, `r^⊥ = (h, 0)`, and `n·r^⊥ = 0` for `n = (0,1)`. That's
+  that only because each spring answers to its own `dᵢ`. 2.0's NCP
+  solve has to confront it directly.
+- **A contact directly below the COM produces no torque.** Then the arm
+  `pᵢ − c` points straight down, its perp is horizontal, and
+  `n·(pᵢ − c)^⊥ = 0` for `n = (0,1)`. That's
   the balanced-on-a-corner case, and it is why the force test uses a
   tilted configuration instead: a vertical moment arm would let a missing
   torque term pass unnoticed.
@@ -296,12 +302,12 @@ The velocity block picks up a matching term:
 ∂f_c/∂v = −b Σᵢ JᵢᵀJᵢ  −  b_slip Σᵢ J_perp,ᵢᵀJ_perp,ᵢ
 ```
 
-which is worth writing as one object. Stack the active rows —
-normal and slip together — into `A`, and put the coefficients on a
+which is worth writing as one object. Extend `J_A` to stack the active
+rows — normal and slip together — and put the coefficients on a
 diagonal:
 
 ```
-∂f_c/∂v = −Aᵀ · diag(b, b_slip) · A
+∂f_c/∂v = −J_Aᵀ · diag(b, b_slip) · J_A
 ```
 
 Symmetric negative semidefinite, in both directions at once: for any `w`,
@@ -325,16 +331,16 @@ J_perp,ᵢᵀ·(σμb·Jᵢ) = σμb · J_perp,ᵢᵀJᵢ
 
 — an outer product of the **perp row with the normal row**, two vectors
 that are neither parallel nor even in the same direction. Symmetry goes,
-and with it the `−AᵀDA` form the generalized Delassus determinant
-depended on.
+and with it the `−J_Aᵀ · diag(b, b_slip) · J_A` form the generalized
+Delassus determinant depended on.
 
 It also stops being negative semidefinite, which is worth being careful
-about. Per contact, in coordinates `(a, c) = (Jᵢ·w, J_perp,ᵢ·w)`, the
-quadratic form is
+about. Per contact, in terms of the normal and slip components
+`Jᵢ·w` and `J_perp,ᵢ·w`, the quadratic form is
 
 ```
-−b·a² + σμb·a·c        matrix   b·⎡ −1    μ/2 ⎤
-                                  ⎣ μ/2   0   ⎦
+−b·(Jᵢ·w)² + σμb·(Jᵢ·w)(J_perp,ᵢ·w)        matrix   b·⎡ −1    μ/2 ⎤
+                                                      ⎣ μ/2   0   ⎦
 ```
 
 whose determinant is `−b²μ²/4`, negative for any `μ > 0`. **Indefinite by
@@ -480,7 +486,7 @@ damper's entry discontinuity remains the only jump in the model, and it
 is still the thing to worry about.
 
 Hunt–Crossley, `λᵢ = −dᵢ(k − b·ḋᵢ)`, is listed because it is the obvious
-step 8 comparison: multiplying the damping by depth makes it vanish
+alternative: multiplying the damping by depth makes it vanish
 continuously at `dᵢ = 0` from both sides, buying back exactly the
 continuity the damper cost and not one degree more. Nothing in this
 family is C¹ at the boundary. That is irreducible, and it is what
@@ -494,33 +500,30 @@ continuous.
 result generalizes, and the general form is what makes 5a and 5b
 distinguishable.
 
-Writing `A = ∂f/∂q` and `D = ∂f/∂v`, the step Jacobian is
+The step Jacobian is
 
 ```
-dz_dz = ⎡ Id + dt²M⁻¹A    dt(Id + dt M⁻¹D) ⎤
-        ⎣ dt M⁻¹A          Id + dt M⁻¹D    ⎦
+dz_dz = ⎡ Id + dt·∂v_{t+1}/∂q_t    dt·∂v_{t+1}/∂v_t ⎤
+        ⎣ ∂v_{t+1}/∂q_t            ∂v_{t+1}/∂v_t    ⎦
+
+∂v_{t+1}/∂q_t = dt·M⁻¹·∂f/∂q        ∂v_{t+1}/∂v_t = Id + dt·M⁻¹·∂f/∂v
 ```
 
-Take `S = Id + dt·M⁻¹D` as the lower-right block, so the upper-right
-block is exactly `dt·S`. The block formula
-`det = det(S)·det(P − Q S⁻¹ R)` gives
-
-```
-P − Q S⁻¹ R = Id + dt²M⁻¹A − (dt·S)(S⁻¹)(dt M⁻¹A) = Id + dt²M⁻¹A − dt²M⁻¹A = Id
-```
-
-and therefore
+The top block row is the identity plus `dt` times the bottom block row.
+Subtracting `dt ×` the bottom rows from the top rows leaves the
+determinant unchanged and the matrix block lower-triangular, with `Id`
+and `∂v_{t+1}/∂v_t` on the diagonal. Therefore
 
 ```
 det(dz_dz) = det(Id + dt·M⁻¹·∂f/∂v)
 ```
 
 **`∂f/∂q` never affects the determinant at all.** The earlier `det = 1`
-was the `D = 0` special case.
+was the `∂f/∂v = 0` special case.
 
 For step 5a, `∂f_c/∂v = 0`, so `det(dz_dz) = 1` exactly — but now with a
-nonzero, configuration-dependent `A`, so the cancellation is doing real
-work rather than being vacuous. That is the single reason the spring
+nonzero, configuration-dependent `∂f_c/∂q`, so the cancellation is doing
+real work rather than being vacuous. That is the single reason the spring
 ships as its own increment.
 
 For step 5b, `∂f_c/∂v = −b·J_Aᵀ J_A`, where `J_A` stacks the Jacobians of
@@ -544,22 +547,24 @@ flat-resting unit square with `b = 50`, `dt = 1e-3`,
 `0.765`.
 
 **Slip damping widens it rather than breaking it.** With
-`∂f_c/∂v = −Aᵀ D A` for `A` the stacked normal *and* slip rows and
-`D = diag(b, b_slip)`, the same Sylvester step gives
+`∂f_c/∂v = −J_Aᵀ · diag(b, b_slip) · J_A` for `J_A` the stacked normal
+*and* slip rows, the same Sylvester step gives
 
 ```
-det(dz_dz) = det(Id − dt · (A M⁻¹ Aᵀ) · D)
+det(dz_dz) = det(Id − dt · Delassus · diag(b, b_slip))
 ```
 
-where `A M⁻¹ Aᵀ` is the Delassus operator over **both directions**. The
-5b form is the special case with no slip rows and `D = b·Id`. So contact
+where `Delassus = J_A M⁻¹ J_Aᵀ` is now taken over **both directions**.
+The 5b form is the special case with no slip rows and every coefficient
+equal to `b`. So contact
 damping and friction contract phase-space volume through one operator,
 not two — which is a decent sign the tangential term was built on the
 right object.
 
 That form survives only while the tangential force is unbounded. The
 Coulomb cone makes `∂f_c/∂v` asymmetric, at which point it is no longer
-`−Aᵀ D A` for any `D` and the determinant stops factoring this way.
+`−J_Aᵀ · (diagonal) · J_A` for any diagonal, and the determinant stops
+factoring this way.
 
 ## What actually caps the stiffness
 
@@ -607,7 +612,7 @@ At `dt = 1e-3`:
 
 Sub-millimetre penetration at a usable timestep is the honest number, and
 the standard complaint about penalty methods. It is also the concrete
-motivation for step 6.
+motivation for 2.0's contact solve.
 
 ## Resting equilibrium
 

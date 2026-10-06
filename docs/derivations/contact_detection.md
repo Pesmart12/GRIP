@@ -99,10 +99,10 @@ This is also the clearest way to see the static indeterminacy of a flat
 resting box: the dynamics determine the *sum* of the two corner forces
 and their center of pressure, but not the individual forces. Penalty
 contact resolves that by construction (each spring responds only to its
-own `d`); the NCP solver in step 6 will have to confront it directly.
+own `d`); 2.0's NCP solve will have to confront it directly.
 
 Completeness here depends on the obstacle being an infinite plane. It
-does **not** carry over to body-body contact (step 6+), where checking
+does **not** carry over to body-body contact (step 9), where checking
 one body's vertices against the other misses the case where the second
 body's vertex penetrates the first body's face with none of the first
 body's vertices inside — that needs vertex-face checks in both

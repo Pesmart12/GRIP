@@ -194,7 +194,7 @@ double MeasureAdjointStep(const Scene& scene) {
   const std::vector<SystemControlVector> dl_dU(static_cast<std::size_t>(kAdjointHorizon), SystemControlVector::Zero(control_size));
 
   const double per_sweep = NanosecondsPerCall([&]() {
-    return grip::adjoint_system(trajectory, scene.params, scene.shapes, ground, kPenalty, dl_dZ, dl_dU, kTimestep).dJ_dZ0(1);
+    return grip::adjoint_system(trajectory, scene.params, scene.shapes, ground, kPenalty, dl_dZ, dl_dU, kTimestep).dobjective_dZ0(1);
   });
   return per_sweep / static_cast<double>(kAdjointHorizon);
 }

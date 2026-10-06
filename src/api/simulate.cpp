@@ -95,8 +95,8 @@ RolloutGradientBatch adjoint_batch(const std::vector<Scene>& scenes, const Traje
   RequireTrajectoryShape(dl_dZ, environments, bodies, horizon, "dl_dZ");
 
   RolloutGradientBatch gradients;
-  gradients.dJ_dZ0 = make_state_batch(environments, bodies);
-  gradients.dJ_dU = make_control_batch(horizon, environments, bodies);
+  gradients.dobjective_dZ0 = make_state_batch(environments, bodies);
+  gradients.dobjective_dU = make_control_batch(horizon, environments, bodies);
 
   const auto state_size = static_cast<Eigen::Index>(kStateValuesPerBody * bodies);
 
@@ -122,7 +122,7 @@ RolloutGradientBatch adjoint_batch(const std::vector<Scene>& scenes, const Traje
       // Every substep reads the same wrench, so the control gradient
       // accumulates over the whole macro step instead of being read off
       // once. Both lines consume the adjoint at the END of their substep,
-      // so dJ_dU is taken before the adjoint is stepped back -- the same
+      // so dobjective_dU is taken before the adjoint is stepped back -- the same
       // ordering the single-scene sweep depends on.
       SystemControlVector control_gradient = PackControls(read_environment_control(dl_dU, step, environment));
       for (std::size_t k = substeps; k-- > 0;) {
@@ -130,7 +130,7 @@ RolloutGradientBatch adjoint_batch(const std::vector<Scene>& scenes, const Traje
         control_gradient.noalias() += jac.dZ_dF.transpose() * adjoint;
         adjoint = jac.dZ_dZ.transpose() * adjoint;
       }
-      write_environment_control(gradients.dJ_dU, step, environment, UnpackControls(control_gradient, bodies));
+      write_environment_control(gradients.dobjective_dU, step, environment, UnpackControls(control_gradient, bodies));
 
       // Stage-cost seeds enter only at macro boundaries, which is where a
       // caller's stage cost is defined -- there is no cost inside a control
@@ -141,7 +141,7 @@ RolloutGradientBatch adjoint_batch(const std::vector<Scene>& scenes, const Traje
     if (adjoint.size() != state_size) {
       throw std::invalid_argument("adjoint size does not match the trajectory's body count");
     }
-    write_environment_state(gradients.dJ_dZ0, environment, UnpackSystem(adjoint, bodies));
+    write_environment_state(gradients.dobjective_dZ0, environment, UnpackSystem(adjoint, bodies));
   }
   return gradients;
 }

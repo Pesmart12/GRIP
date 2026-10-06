@@ -288,8 +288,10 @@ side, and finite-differencing at squarely stacked boxes compares two
 different formulas. `test_pair_detection.cpp` pins this, and the
 validation configurations deliberately tilt clear of it.
 
-**The manifold changes size**, two points to one, as a body tips onto a
-corner. Contact forces redistribute discontinuously.
+**The penetrating set changes size**, two points to one, as a body tips
+onto a corner. Detection keeps returning both clipped ends; what changes
+is that one rises above the face and the force law drops it, so contact
+forces redistribute discontinuously.
 
 **The normal itself jumps** when the winning axis changes between
 non-parallel faces — by the angle between them.

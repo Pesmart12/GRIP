@@ -13,7 +13,7 @@ namespace grip {
 // Deliberately its own struct rather than fields on RigidBodyParams
 // (mass properties, never differentiated with respect to) or on
 // HalfPlane (geometry): these are properties of the contact *model*,
-// and step 8 swaps models with everything else held fixed.
+// not of any body or any piece of scenery.
 //
 // Zero stiffness means no contact response. That's a consistent
 // degenerate case rather than a sentinel -- a body with no contact
@@ -80,8 +80,8 @@ Eigen::Vector3d penalty_force_body(const RigidBodyState& state, const BodyShape&
 //
 // df_c/dv = -b * sum_i J_i^T J_i - b_slip * sum_i J_perp,i^T J_perp,i,
 // symmetric and negative semidefinite: neither damper can add energy.
-// Stacking both directions makes this -A^T diag(b, b_slip) A with A the
-// normal and perp rows together, so the determinant identity picks up a
+// Stacking both directions makes this -J_A^T diag(b, b_slip) J_A with J_A
+// the active normal and perp rows together, so the determinant identity picks up a
 // Delassus operator over both directions rather than just the normal
 // one. The Coulomb cone will break this symmetry; it holds while the
 // tangential force is unbounded.

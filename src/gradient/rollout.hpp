@@ -28,8 +28,8 @@ std::vector<std::vector<RigidBodyState>> rollout_system(const std::vector<RigidB
 // a caller can actually choose: where the trajectory started, and what it was
 // driven with.
 struct RolloutGradients {
-  SystemStateVector dJ_dZ0;                  // 6B
-  std::vector<SystemControlVector> dJ_dU;    // H entries, each 3B
+  SystemStateVector dobjective_dZ0;                  // 6B
+  std::vector<SystemControlVector> dobjective_dU;    // H entries, each 3B
 };
 
 
@@ -49,9 +49,9 @@ struct RolloutGradients {
 // The recursion, derived in docs/derivations/adjoint.md:
 //
 //   adjoint_H = dl_dZ[H]
-//   dJ_dU[t]  = dl_dU[t] + dZ_dF_t^T * adjoint_{t+1}
+//   dobjective_dU[t]  = dl_dU[t] + dZ_dF_t^T * adjoint_{t+1}
 //   adjoint_t = dl_dZ[t] + dZ_dZ_t^T * adjoint_{t+1}
-//   dJ_dZ0    = adjoint_0
+//   dobjective_dZ0    = adjoint_0
 //
 // with each Jacobian evaluated at the state at the START of the step it
 // describes. Cost is O(H) rather than forward mode's O(H^2), which is the

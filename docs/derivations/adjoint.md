@@ -40,7 +40,7 @@ Write the objective with running and terminal costs, and treat the
 dynamics as constraints rather than substitutions:
 
 ```
-minimise    J = Σ_{t=0}^{H−1} ℓ_t(Z_t, U_t) + ℓ_H(Z_H)
+minimise    objective = Σ_{t=0}^{H−1} ℓ_t(Z_t, U_t) + ℓ_H(Z_H)
 subject to  Z_{t+1} − F(Z_t, U_t) = 0        for t = 0 … H−1
 ```
 
@@ -88,7 +88,7 @@ Compare it against the interior formula and they are identical, which is
 why
 
 ```
-dJ/dZ₀ = adjoint₀
+d(objective)/dZ₀ = adjoint₀
 ```
 
 falls out with no extra work. The asymmetry at `t = 0` is the whole reason
@@ -99,7 +99,7 @@ bare term, so there is nothing to set to zero and the expression is
 directly what we want:
 
 ```
-dJ/dU_t = ∂ℓ_t/∂U_t + (dZ_dF)ₜᵀ·adjoint_{t+1}
+d(objective)/dU_t = ∂ℓ_t/∂U_t + (dZ_dF)ₜᵀ·adjoint_{t+1}
 ```
 
 ## The three ways this breaks
@@ -109,7 +109,7 @@ the output:
 
 1. **`adjoint_t` where `adjoint_{t+1}` belongs** in the control gradient.
    Dimensionally sound, silently wrong. The implementation reads off
-   `dJ_dU[t]` *before* stepping the adjoint back for exactly this reason.
+   `dobjective_dU[t]` *before* stepping the adjoint back for exactly this reason.
 2. **The Jacobian taken at the wrong state.** `(dZ_dZ)ₜ` is evaluated at
    `Z_t` — the state at the *start* of the step it describes.
 3. **Off-by-one at either boundary**, from the `H+1` versus `H` counts.
@@ -149,7 +149,7 @@ time.
 The control gradient, with `dz_dfᵀ = [dt²M⁻¹ | dt·M⁻¹]`:
 
 ```
-dJ/du_t = dt²M⁻¹(0,1,0)ᵀ + dt·M⁻¹(0, (H−t−1)dt, 0)ᵀ = dt²(H−t)·M⁻¹(0,1,0)ᵀ
+d(objective)/du_t = dt²M⁻¹(0,1,0)ᵀ + dt·M⁻¹(0, (H−t−1)dt, 0)ᵀ = dt²(H−t)·M⁻¹(0,1,0)ᵀ
 ```
 
 which collapses to the single-step `dz_df` at `t = H−1`. At `m = 1`,
@@ -181,8 +181,8 @@ per-step allocation issue already flagged at the end of
 
 ## The objective is the caller's
 
-GRIP does not define `J` or `ℓ`. The caller supplies `∂ℓ_t/∂Z_t` and
-`∂ℓ_t/∂U_t` — the seeds — and receives `dJ/dZ₀` and `dJ/dU_t`. A
+GRIP does not define the objective or `ℓ`. The caller supplies `∂ℓ_t/∂Z_t` and
+`∂ℓ_t/∂U_t` — the seeds — and receives `d(objective)/dZ₀` and `d(objective)/dU_t`. A
 terminal-only objective is the case where every seed but the last is zero.
 
 A cost function is a task definition, and tasks belong to the repositories

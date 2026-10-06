@@ -88,7 +88,9 @@ same way the discarded `p₀` did.
 | `b_slip` | slip damping | scalar | `PenaltyParams::slip_damping` |
 | `μ` | Coulomb friction coefficient | scalar | `PenaltyParams::friction` |
 | `U` | penalty potential, `= Σᵢ (k/2)·min(0, dᵢ)²` | scalar | — |
-| `J_A` | active contact Jacobians, stacked one row per active contact | a×3 | — |
+| `σ` | sign of the unclamped friction force on the saturated branch, `= sign(b_slip·sᵢ)` | ±1 | — |
+| `α` | slope (incline) angle, for friction-angle and creep arguments | scalar | — |
+| `J_A` | active contact rows, stacked: the normal rows `Jᵢ` of contacts carrying force, plus their slip rows `J_perp,ᵢ` where friction is on | rows×3 | — |
 | `Delassus` | inverse effective mass at the contacts, `= J_A M⁻¹ J_Aᵀ` | a×a | `delassus` |
 | `eig_max(·)` | largest eigenvalue | operator | — |
 
@@ -155,8 +157,8 @@ actually carrying force.
 | symbol | meaning | shape | code |
 |---|---|---|---|
 | `H` | rollout horizon, in steps | scalar | `horizon` |
-| `adjoint` | costate, `= dJ/dZ_t` | 6B-vector | `adjoint` |
-| `J` | the caller's scalar objective | scalar | — |
+| `adjoint` | costate, `= d(objective)/dZ_t` | 6B-vector | `adjoint` |
+| `objective` | the caller's scalar objective | scalar | — |
 | `ℓ_t` | the caller's stage cost at step `t` | scalar | — |
 
 `H` for the horizon, not `T`: `T` is kinetic energy in
@@ -170,7 +172,13 @@ from `n`, the contact normal, only by case.
 resolution as `Delassus`: when every short candidate collides, use the
 name.
 
-`J` and `ℓ` are the **consumer's**, not GRIP's. They appear in
+`objective` is spelled out rather than lettered. Optimal control calls
+it `J`, which is the contact Jacobian everywhere else here — this file
+used `J` for both until the collision was caught. The code follows:
+`dobjective_dZ0` and `dobjective_dU`, in the same
+`d<of>_d<with respect to>` shape as the Jacobian member names.
+
+`objective` and `ℓ` are the **consumer's**, not GRIP's. They appear in
 `adjoint.md` only as scaffolding, to show where the seeds `∂ℓ/∂Z` and
 `∂ℓ/∂U` come from. The API never sees a cost function — a cost is a task
 definition, and tasks live in the repositories that call this one.
@@ -208,5 +216,5 @@ The tangential direction needs no symbol at all — in 2D it is just
 Math notation is for `docs/derivations/`. Code uses descriptive
 identifiers — `signed_distance`, not `d`; `normal_force_magnitude`, not
 `lambda`. The exceptions are the Jacobian member names (`dz_dz`,
-`dz_du`, `dZ_dZ`, `dZ_dU`), where matching the math directly is clearer
+`dz_df`, `dZ_dZ`, `dZ_dF`), where matching the math directly is clearer
 than any prose spelling.

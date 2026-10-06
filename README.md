@@ -78,7 +78,7 @@ trajectory = grip.rollout_batch([scene] * envs, initial, controls, substeps=10)
 # Gradient of final height w.r.t. the initial state and every control.
 dl_dZ = np.zeros_like(trajectory)
 dl_dZ[-1, :, 0, 1] = 1.0
-dJ_dZ0, dJ_dU = grip.adjoint_batch([scene] * envs, trajectory, controls, 10, dl_dZ, np.zeros_like(controls))
+dobjective_dZ0, dobjective_dU = grip.adjoint_batch([scene] * envs, trajectory, controls, 10, dl_dZ, np.zeros_like(controls))
 ```
 
 Every environment carries its own `Scene`, so masses, shapes, ground

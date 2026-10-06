@@ -126,22 +126,24 @@ by construction, and an exact check catches a bug (e.g. an accidental
 
 ## Structural check: the determinant is exactly 1
 
-For any conservative force law (`∂f/∂v = 0`, writing `A = ∂f/∂q`), the
-step Jacobian is
+For any conservative force law (`∂f/∂v = 0`), the step Jacobian is
 
 ```
-dz_dz = [ Id + dt²·M⁻¹A   dt·Id ]
-        [ dt·M⁻¹A         Id    ]
+dz_dz = [ Id + dt²·M⁻¹·∂f/∂q   dt·Id ]
+        [ dt·M⁻¹·∂f/∂q         Id    ]
 ```
 
-and the block formula `det = det(S)·det(P − Q·S⁻¹·R)` with `S = Id`
-gives
+The top block row is the identity plus `dt` times the bottom block row.
+Subtracting `dt ×` the bottom rows from the top rows does not change the
+determinant, and leaves
 
 ```
-det(P − Q·S⁻¹·R) = det(Id + dt²·M⁻¹A − dt·Id·dt·M⁻¹A) = det(Id) = 1
+[ Id              0  ]
+[ dt·M⁻¹·∂f/∂q    Id ]
 ```
 
-The two `dt²·M⁻¹A` terms cancel exactly. So `det(dz_dz) = 1` — the
+which is block lower-triangular with identity blocks on the diagonal, so
+its determinant is 1. So `det(dz_dz) = 1` — the
 discrete statement of phase-space volume preservation, which is the
 defining property of a symplectic map and the same fact underlying the
 bounded energy behavior in `symplectic_euler.md`.

@@ -185,7 +185,7 @@ TEST(BatchedAdjoint, ControlGradientMatchesCentralFiniteDifferenceAcrossSubsteps
   for (std::size_t step = 0; step < controls.steps; ++step) {
     for (std::size_t body = 0; body < single.size(); ++body) {
       for (int component = 0; component < 3; ++component) {
-        const double analytic = gradients.dJ_dU.values[control_batch_offset(gradients.dJ_dU, step, 0, body) + static_cast<std::size_t>(component)];
+        const double analytic = gradients.dobjective_dU.values[control_batch_offset(gradients.dobjective_dU, step, 0, body) + static_cast<std::size_t>(component)];
         const double numeric = FiniteDifferenceControlGradient(scenes, initial, controls, substeps, step, body, component, 1.0e-6);
         EXPECT_NEAR(analytic, numeric, 1.0e-6 + 1.0e-5 * std::abs(numeric)) << "step " << step << " body " << body << " component " << component;
         largest = std::max(largest, std::abs(analytic));
@@ -227,7 +227,7 @@ TEST(BatchedAdjoint, InitialStateGradientMatchesCentralFiniteDifference) {
         values[side] = read_trajectory_state(moved, moved.steps, 0)[0].q.y();
       }
       const double numeric = (values[0] - values[1]) / 2.0e-6;
-      const double analytic = gradients.dJ_dZ0.values[state_batch_offset(gradients.dJ_dZ0, 0, body) + component];
+      const double analytic = gradients.dobjective_dZ0.values[state_batch_offset(gradients.dobjective_dZ0, 0, body) + component];
       EXPECT_NEAR(analytic, numeric, 1.0e-6 + 1.0e-5 * std::abs(numeric)) << "body " << body << " component " << component;
     }
   }
@@ -255,13 +255,13 @@ TEST(BatchedAdjoint, EnvironmentsDoNotCouple) {
   for (const std::size_t environment : {std::size_t{0}, std::size_t{2}}) {
     for (std::size_t body = 0; body < single.size(); ++body) {
       for (std::size_t component = 0; component < kStateValuesPerBody; ++component) {
-        EXPECT_EQ(gradients.dJ_dZ0.values[state_batch_offset(gradients.dJ_dZ0, environment, body) + component], 0.0) << "env " << environment;
+        EXPECT_EQ(gradients.dobjective_dZ0.values[state_batch_offset(gradients.dobjective_dZ0, environment, body) + component], 0.0) << "env " << environment;
       }
     }
     for (std::size_t step = 0; step < controls.steps; ++step) {
       for (std::size_t body = 0; body < single.size(); ++body) {
         for (std::size_t component = 0; component < kControlValuesPerBody; ++component) {
-          EXPECT_EQ(gradients.dJ_dU.values[control_batch_offset(gradients.dJ_dU, step, environment, body) + component], 0.0) << "env " << environment << " step " << step;
+          EXPECT_EQ(gradients.dobjective_dU.values[control_batch_offset(gradients.dobjective_dU, step, environment, body) + component], 0.0) << "env " << environment << " step " << step;
         }
       }
     }
@@ -271,7 +271,7 @@ TEST(BatchedAdjoint, EnvironmentsDoNotCouple) {
   // nothing.
   double seeded = 0.0;
   for (std::size_t component = 0; component < kStateValuesPerBody; ++component) {
-    seeded += std::abs(gradients.dJ_dZ0.values[state_batch_offset(gradients.dJ_dZ0, 1, 0) + component]);
+    seeded += std::abs(gradients.dobjective_dZ0.values[state_batch_offset(gradients.dobjective_dZ0, 1, 0) + component]);
   }
   EXPECT_GT(seeded, 1.0e-6);
 }
