@@ -91,11 +91,11 @@ void ExpectGradientsMatchFiniteDifference(const std::vector<RigidBodyState>& ini
   std::vector<SystemControlVector> dl_dU;
   MakeSeeds(horizon, num_bodies, &dl_dZ, &dl_dU);
 
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, plane, penalty, controls, dt);
-  const RolloutGradients analytic = adjoint_system(trajectory, params, shapes, plane, penalty, dl_dZ, dl_dU, dt);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, plane, penalty, controls, 1, dt);
+  const RolloutGradients analytic = adjoint_system(trajectory, params, shapes, plane, penalty, controls, 1, dl_dZ, dl_dU, dt);
 
   const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> objective_of_initial = [&](const Eigen::VectorXd& z0) {
-    const std::vector<std::vector<RigidBodyState>> perturbed = rollout_system(UnpackSystem(z0, num_bodies), params, shapes, plane, penalty, controls, dt);
+    const std::vector<std::vector<RigidBodyState>> perturbed = rollout_system(UnpackSystem(z0, num_bodies), params, shapes, plane, penalty, controls, 1, dt);
     Eigen::VectorXd out(1);
     out(0) = Objective(perturbed, controls, dl_dZ, dl_dU);
     return out;
@@ -109,7 +109,7 @@ void ExpectGradientsMatchFiniteDifference(const std::vector<RigidBodyState>& ini
 
   const std::function<Eigen::VectorXd(const Eigen::VectorXd&)> objective_of_controls = [&](const Eigen::VectorXd& flat) {
     const std::vector<std::vector<Eigen::Vector3d>> perturbed_controls = UnflattenSequence(flat, horizon, num_bodies);
-    const std::vector<std::vector<RigidBodyState>> perturbed = rollout_system(initial, params, shapes, plane, penalty, perturbed_controls, dt);
+    const std::vector<std::vector<RigidBodyState>> perturbed = rollout_system(initial, params, shapes, plane, penalty, perturbed_controls, 1, dt);
     Eigen::VectorXd out(1);
     out(0) = Objective(perturbed, perturbed_controls, dl_dZ, dl_dU);
     return out;
@@ -177,7 +177,7 @@ TEST(RolloutGradients, MatchCentralFiniteDifferenceInSustainedContact) {
   // Confirm the premise: every step keeps at least one corner well clear of
   // d = 0 on the penetrating side, by far more than the finite-difference
   // step could move it.
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, dt);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, 1, dt);
   for (std::size_t t = 0; t < trajectory.size(); ++t) {
     double deepest = 0.0;
     for (const Contact& contact : detect_contacts_body(trajectory[t][0], shapes[0], ground)) {
@@ -205,7 +205,7 @@ TEST(RolloutGradients, FreeFlightStateGradientMatchesClosedForm) {
   const std::vector<BodyShape> shapes(1);
   const std::vector<std::vector<Eigen::Vector3d>> controls(horizon, std::vector<Eigen::Vector3d>(1, Eigen::Vector3d(0.4, -0.2, 0.1)));
 
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, HalfPlane{}, PenaltyParams{}, controls, dt);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, HalfPlane{}, PenaltyParams{}, controls, 1, dt);
 
   // Row i of dz_H/dz_0 is the initial-state gradient of the scalar (z_H)_i.
   Eigen::Matrix<double, 6, 6> full;
@@ -214,7 +214,7 @@ TEST(RolloutGradients, FreeFlightStateGradientMatchesClosedForm) {
     dl_dZ[horizon] = SystemStateVector::Unit(6, i);
     const std::vector<SystemControlVector> dl_dU(horizon, SystemControlVector::Zero(3));
 
-    full.row(i) = adjoint_system(trajectory, params, shapes, HalfPlane{}, PenaltyParams{}, dl_dZ, dl_dU, dt).dobjective_dZ0.transpose();
+    full.row(i) = adjoint_system(trajectory, params, shapes, HalfPlane{}, PenaltyParams{}, controls, 1, dl_dZ, dl_dU, dt).dobjective_dZ0.transpose();
   }
 
   Eigen::Matrix<double, 6, 6> expected = Eigen::Matrix<double, 6, 6>::Identity();
@@ -246,14 +246,14 @@ TEST(RolloutGradients, FreeFlightControlGradientMatchesClosedForm) {
   const std::vector<BodyShape> shapes(1);
   const std::vector<std::vector<Eigen::Vector3d>> controls(horizon, std::vector<Eigen::Vector3d>(1, Eigen::Vector3d::Zero()));
 
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, HalfPlane{}, PenaltyParams{}, controls, dt);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, HalfPlane{}, PenaltyParams{}, controls, 1, dt);
 
   // Objective reads off the final y position.
   std::vector<SystemStateVector> dl_dZ(horizon + 1, SystemStateVector::Zero(6));
   dl_dZ[horizon] = SystemStateVector::Unit(6, 1);
   const std::vector<SystemControlVector> dl_dU(horizon, SystemControlVector::Zero(3));
 
-  const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, HalfPlane{}, PenaltyParams{}, dl_dZ, dl_dU, dt);
+  const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, HalfPlane{}, PenaltyParams{}, controls, 1, dl_dZ, dl_dU, dt);
 
   for (std::size_t t = 0; t < horizon; ++t) {
     const double remaining = static_cast<double>(horizon - t);
@@ -285,14 +285,14 @@ TEST(RolloutGradients, AdjointDecouplesAcrossBodies) {
   const PenaltyParams penalty{/*stiffness=*/1.0e4, /*damping=*/50.0};
   const std::vector<std::vector<Eigen::Vector3d>> controls(horizon, std::vector<Eigen::Vector3d>(2, Eigen::Vector3d::Zero()));
 
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, dt);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, 1, dt);
 
   // Seed body 0 only.
   std::vector<SystemStateVector> dl_dZ(horizon + 1, SystemStateVector::Zero(12));
   dl_dZ[horizon].head<6>().setConstant(1.0);
   const std::vector<SystemControlVector> dl_dU(horizon, SystemControlVector::Zero(6));
 
-  const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, ground, penalty, dl_dZ, dl_dU, dt);
+  const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, ground, penalty, controls, 1, dl_dZ, dl_dU, dt);
 
   EXPECT_FALSE(gradients.dobjective_dZ0.head<6>().isZero(0.0)) << "body 0 should have picked up a gradient";
   EXPECT_TRUE(gradients.dobjective_dZ0.tail<6>().isZero(0.0)) << "body 1 is uncoupled and must stay at zero";
@@ -318,7 +318,7 @@ TEST(RolloutGradients, TerminalSeedAloneReproducesTheJacobianProduct) {
   const PenaltyParams penalty{/*stiffness=*/1.0e4, /*damping=*/50.0};
   const std::vector<std::vector<Eigen::Vector3d>> controls(horizon, std::vector<Eigen::Vector3d>(1, Eigen::Vector3d(0.0, -20.0, 0.0)));
 
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, dt);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, 1, dt);
 
   Eigen::MatrixXd product = Eigen::MatrixXd::Identity(6, 6);
   for (std::size_t t = 0; t < horizon; ++t) {
@@ -330,7 +330,7 @@ TEST(RolloutGradients, TerminalSeedAloneReproducesTheJacobianProduct) {
     dl_dZ[horizon] = SystemStateVector::Unit(6, i);
     const std::vector<SystemControlVector> dl_dU(horizon, SystemControlVector::Zero(3));
 
-    const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, ground, penalty, dl_dZ, dl_dU, dt);
+    const RolloutGradients gradients = adjoint_system(trajectory, params, shapes, ground, penalty, controls, 1, dl_dZ, dl_dU, dt);
 
     for (int j = 0; j < 6; ++j) {
       EXPECT_NEAR(gradients.dobjective_dZ0(j), product(i, j), 1.0e-12) << "row " << i << ", column " << j;

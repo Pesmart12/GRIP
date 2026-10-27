@@ -102,23 +102,17 @@ inline StateBatch make_state_batch(std::size_t environments, std::size_t bodies)
 inline std::vector<RigidBodyState> read_environment_state(const StateBatch& batch, std::size_t environment) {
   std::vector<RigidBodyState> states(batch.bodies);
   for (std::size_t body = 0; body < batch.bodies; ++body) {
-    const std::size_t offset = state_batch_offset(batch, environment, body);
-    states[body].q = Eigen::Vector3d(batch.values[offset + 0], batch.values[offset + 1], batch.values[offset + 2]);
-    states[body].v = Eigen::Vector3d(batch.values[offset + 3], batch.values[offset + 4], batch.values[offset + 5]);
+    states[body] = Unpack(Eigen::Map<const StateVector>(batch.values.data() + state_batch_offset(batch, environment, body)));
   }
   return states;
 }
 
 
+// Each body's six values go through Pack/Unpack rather than being indexed
+// by hand, so the (q, v) ordering stays encoded in exactly one place.
 inline void write_environment_state(StateBatch& batch, std::size_t environment, const std::vector<RigidBodyState>& states) {
   for (std::size_t body = 0; body < batch.bodies; ++body) {
-    const std::size_t offset = state_batch_offset(batch, environment, body);
-    batch.values[offset + 0] = states[body].q.x();
-    batch.values[offset + 1] = states[body].q.y();
-    batch.values[offset + 2] = states[body].q.z();
-    batch.values[offset + 3] = states[body].v.x();
-    batch.values[offset + 4] = states[body].v.y();
-    batch.values[offset + 5] = states[body].v.z();
+    Eigen::Map<StateVector>(batch.values.data() + state_batch_offset(batch, environment, body)) = Pack(states[body]);
   }
 }
 
@@ -217,9 +211,7 @@ inline TrajectoryBatch make_trajectory_batch(std::size_t steps, std::size_t envi
 inline std::vector<RigidBodyState> read_trajectory_state(const TrajectoryBatch& batch, std::size_t step, std::size_t environment) {
   std::vector<RigidBodyState> states(batch.bodies);
   for (std::size_t body = 0; body < batch.bodies; ++body) {
-    const std::size_t offset = trajectory_batch_offset(batch, step, environment, body);
-    states[body].q = Eigen::Vector3d(batch.values[offset + 0], batch.values[offset + 1], batch.values[offset + 2]);
-    states[body].v = Eigen::Vector3d(batch.values[offset + 3], batch.values[offset + 4], batch.values[offset + 5]);
+    states[body] = Unpack(Eigen::Map<const StateVector>(batch.values.data() + trajectory_batch_offset(batch, step, environment, body)));
   }
   return states;
 }
@@ -227,13 +219,7 @@ inline std::vector<RigidBodyState> read_trajectory_state(const TrajectoryBatch& 
 
 inline void write_trajectory_state(TrajectoryBatch& batch, std::size_t step, std::size_t environment, const std::vector<RigidBodyState>& states) {
   for (std::size_t body = 0; body < batch.bodies; ++body) {
-    const std::size_t offset = trajectory_batch_offset(batch, step, environment, body);
-    batch.values[offset + 0] = states[body].q.x();
-    batch.values[offset + 1] = states[body].q.y();
-    batch.values[offset + 2] = states[body].q.z();
-    batch.values[offset + 3] = states[body].v.x();
-    batch.values[offset + 4] = states[body].v.y();
-    batch.values[offset + 5] = states[body].v.z();
+    Eigen::Map<StateVector>(batch.values.data() + trajectory_batch_offset(batch, step, environment, body)) = Pack(states[body]);
   }
 }
 
@@ -268,5 +254,6 @@ inline void validate_scene_batch(const std::vector<Scene>& scenes, const StateBa
     }
   }
 }
+
 
 }  // namespace grip

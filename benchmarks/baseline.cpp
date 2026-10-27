@@ -104,7 +104,7 @@ Scene MakeSettledStack(const char* name, std::size_t count) {
   }
 
   const HalfPlane ground;
-  const auto trajectory = grip::rollout_system(scene.states, scene.params, scene.shapes, ground, kPenalty, ZeroControls(count, kSettleSteps), kTimestep);
+  const auto trajectory = grip::rollout_system(scene.states, scene.params, scene.shapes, ground, kPenalty, ZeroControls(count, kSettleSteps), 1, kTimestep);
   scene.states = trajectory.back();
   return scene;
 }
@@ -185,7 +185,7 @@ double MeasureAdjointStep(const Scene& scene) {
   const HalfPlane ground;
   const std::size_t bodies = scene.states.size();
   const auto controls = ZeroControls(bodies, kAdjointHorizon);
-  const auto trajectory = grip::rollout_system(scene.states, scene.params, scene.shapes, ground, kPenalty, controls, kTimestep);
+  const auto trajectory = grip::rollout_system(scene.states, scene.params, scene.shapes, ground, kPenalty, controls, 1, kTimestep);
 
   const auto state_size = static_cast<Eigen::Index>(6 * bodies);
   const auto control_size = static_cast<Eigen::Index>(3 * bodies);
@@ -194,7 +194,7 @@ double MeasureAdjointStep(const Scene& scene) {
   const std::vector<SystemControlVector> dl_dU(static_cast<std::size_t>(kAdjointHorizon), SystemControlVector::Zero(control_size));
 
   const double per_sweep = NanosecondsPerCall([&]() {
-    return grip::adjoint_system(trajectory, scene.params, scene.shapes, ground, kPenalty, dl_dZ, dl_dU, kTimestep).dobjective_dZ0(1);
+    return grip::adjoint_system(trajectory, scene.params, scene.shapes, ground, kPenalty, controls, 1, dl_dZ, dl_dU, kTimestep).dobjective_dZ0(1);
   });
   return per_sweep / static_cast<double>(kAdjointHorizon);
 }

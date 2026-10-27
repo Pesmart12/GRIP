@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "dynamics/integrator.hpp"
+#include "gradient/rollout.hpp"
 
 namespace grip {
 namespace {
@@ -36,16 +36,13 @@ void RequireTrajectoryShape(const TrajectoryBatch& trajectory, std::size_t envir
 }
 
 
-// One control step: the same wrench applied for `substeps` integration steps.
-// The conversion in and out of RigidBodyState happens once around the whole
-// macro step rather than once per substep, which is what api/scene.hpp means
-// about amortizing it.
-std::vector<RigidBodyState> AdvanceMacroStep(const Scene& scene, const std::vector<RigidBodyState>& start, const std::vector<Eigen::Vector3d>& control, std::size_t substeps) {
-  std::vector<RigidBodyState> states = start;
-  for (std::size_t k = 0; k < substeps; ++k) {
-    states = step_system(states, scene.params, scene.shapes, scene.plane, scene.penalty, control, scene.dt, scene.gravity);
+// One environment's controls, in the per-step form rollout_system reads.
+std::vector<std::vector<Eigen::Vector3d>> ReadEnvironmentControls(const ControlBatch& controls, std::size_t environment) {
+  std::vector<std::vector<Eigen::Vector3d>> sequence(controls.steps);
+  for (std::size_t step = 0; step < controls.steps; ++step) {
+    sequence[step] = read_environment_control(controls, step, environment);
   }
-  return states;
+  return sequence;
 }
 
 }  // namespace
@@ -55,10 +52,12 @@ void step_batch(const std::vector<Scene>& scenes, StateBatch& state, const Contr
   validate_scene_batch(scenes, state);
   RequireControlShape(controls, state.environments, state.bodies, 1, "controls");
 
+  // One control step is a one-step rollout, so substeps are composed in
+  // exactly one place: rollout_system.
   for (std::size_t environment = 0; environment < state.environments; ++environment) {
-    const std::vector<RigidBodyState> start = read_environment_state(state, environment);
-    const std::vector<Eigen::Vector3d> control = read_environment_control(controls, 0, environment);
-    write_environment_state(state, environment, AdvanceMacroStep(scenes[environment], start, control, substeps));
+    const Scene& scene = scenes[environment];
+    const std::vector<std::vector<RigidBodyState>> stepped = rollout_system(read_environment_state(state, environment), scene.params, scene.shapes, scene.plane, scene.penalty, ReadEnvironmentControls(controls, environment), substeps, scene.dt, scene.gravity);
+    write_environment_state(state, environment, stepped.back());
   }
 }
 
@@ -71,11 +70,10 @@ void rollout_batch(const std::vector<Scene>& scenes, const StateBatch& initial, 
   trajectory = make_trajectory_batch(controls.steps, initial.environments, initial.bodies);
 
   for (std::size_t environment = 0; environment < initial.environments; ++environment) {
-    std::vector<RigidBodyState> states = read_environment_state(initial, environment);
-    write_trajectory_state(trajectory, 0, environment, states);
-    for (std::size_t step = 0; step < controls.steps; ++step) {
-      states = AdvanceMacroStep(scenes[environment], states, read_environment_control(controls, step, environment), substeps);
-      write_trajectory_state(trajectory, step + 1, environment, states);
+    const Scene& scene = scenes[environment];
+    const std::vector<std::vector<RigidBodyState>> states = rollout_system(read_environment_state(initial, environment), scene.params, scene.shapes, scene.plane, scene.penalty, ReadEnvironmentControls(controls, environment), substeps, scene.dt, scene.gravity);
+    for (std::size_t step = 0; step <= controls.steps; ++step) {
+      write_trajectory_state(trajectory, step, environment, states[step]);
     }
   }
 }
@@ -98,50 +96,28 @@ RolloutGradientBatch adjoint_batch(const std::vector<Scene>& scenes, const Traje
   gradients.dobjective_dZ0 = make_state_batch(environments, bodies);
   gradients.dobjective_dU = make_control_batch(horizon, environments, bodies);
 
-  const auto state_size = static_cast<Eigen::Index>(kStateValuesPerBody * bodies);
-
+  // The recursion itself is adjoint_system's -- this only converts each
+  // environment's slice of the batch into the form it reads and back.
   for (std::size_t environment = 0; environment < environments; ++environment) {
     const Scene& scene = scenes[environment];
 
-    // Terminal condition: Z_H sits in its own stage cost and in the
-    // constraint that produced it, but in no constraint's dynamics.
-    SystemStateVector adjoint = PackSystem(read_trajectory_state(dl_dZ, horizon, environment));
-
-    for (std::size_t step = horizon; step-- > 0;) {
-      const std::vector<Eigen::Vector3d> control = read_environment_control(controls, step, environment);
-
-      // Rebuild the states inside this macro step. They were not recorded,
-      // and every substep's Jacobian is taken at the state that substep
-      // starts from -- getting that wrong is adjoint.md's failure mode 2.
-      std::vector<std::vector<RigidBodyState>> inner(substeps + 1);
-      inner[0] = read_trajectory_state(trajectory, step, environment);
-      for (std::size_t k = 0; k < substeps; ++k) {
-        inner[k + 1] = step_system(inner[k], scene.params, scene.shapes, scene.plane, scene.penalty, control, scene.dt, scene.gravity);
-      }
-
-      // Every substep reads the same wrench, so the control gradient
-      // accumulates over the whole macro step instead of being read off
-      // once. Both lines consume the adjoint at the END of their substep,
-      // so dobjective_dU is taken before the adjoint is stepped back -- the same
-      // ordering the single-scene sweep depends on.
-      SystemControlVector control_gradient = PackControls(read_environment_control(dl_dU, step, environment));
-      for (std::size_t k = substeps; k-- > 0;) {
-        const SystemStepJacobians jac = step_system_jacobian(inner[k], scene.params, scene.shapes, scene.plane, scene.penalty, scene.dt, scene.gravity);
-        control_gradient.noalias() += jac.dZ_dF.transpose() * adjoint;
-        adjoint = jac.dZ_dZ.transpose() * adjoint;
-      }
-      write_environment_control(gradients.dobjective_dU, step, environment, UnpackControls(control_gradient, bodies));
-
-      // Stage-cost seeds enter only at macro boundaries, which is where a
-      // caller's stage cost is defined -- there is no cost inside a control
-      // step to seed with.
-      adjoint += PackSystem(read_trajectory_state(dl_dZ, step, environment));
+    std::vector<std::vector<RigidBodyState>> states(horizon + 1);
+    std::vector<SystemStateVector> state_seeds(horizon + 1);
+    for (std::size_t step = 0; step <= horizon; ++step) {
+      states[step] = read_trajectory_state(trajectory, step, environment);
+      state_seeds[step] = PackSystem(read_trajectory_state(dl_dZ, step, environment));
+    }
+    std::vector<SystemControlVector> control_seeds(horizon);
+    for (std::size_t step = 0; step < horizon; ++step) {
+      control_seeds[step] = PackControls(read_environment_control(dl_dU, step, environment));
     }
 
-    if (adjoint.size() != state_size) {
-      throw std::invalid_argument("adjoint size does not match the trajectory's body count");
+    const RolloutGradients sweep = adjoint_system(states, scene.params, scene.shapes, scene.plane, scene.penalty, ReadEnvironmentControls(controls, environment), substeps, state_seeds, control_seeds, scene.dt, scene.gravity);
+
+    write_environment_state(gradients.dobjective_dZ0, environment, UnpackSystem(sweep.dobjective_dZ0, bodies));
+    for (std::size_t step = 0; step < horizon; ++step) {
+      write_environment_control(gradients.dobjective_dU, step, environment, UnpackControls(sweep.dobjective_dU[step], bodies));
     }
-    write_environment_state(gradients.dobjective_dZ0, environment, UnpackSystem(adjoint, bodies));
   }
   return gradients;
 }

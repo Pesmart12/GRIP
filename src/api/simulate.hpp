@@ -72,22 +72,12 @@ struct RolloutGradientBatch {
 // receives total derivatives. A terminal-only objective is the case where
 // every dl_dZ entry but the last is zero.
 //
-// The recursion is docs/derivations/adjoint.md's, with one addition. A
-// control step is a composition of `substeps` integration steps that all
-// read the *same* wrench, so the control gradient accumulates across the
-// whole macro step rather than being read off once:
-//
-//   for k = substeps-1 .. 0:  dobjective_dU[t] += dZ_dF_k^T . adjoint
-//                             adjoint   = dZ_dZ_k^T . adjoint
-//
-// which is the same two lines as the single-step sweep, run inside the macro
-// step and accumulating into one entry. The stage-cost seeds enter only at
-// macro boundaries, since that is where a caller's stage cost is defined.
-//
-// States between control steps are not stored, so this re-runs each macro
-// step forward to rebuild them before sweeping back through it. That costs
-// one extra forward pass over the rollout and is the same recompute-rather-
-// than-tape trade the single-scene adjoint already makes.
+// The recursion is adjoint_system's (gradient/rollout.hpp), called once per
+// environment -- including how substeps accumulate into one control
+// gradient, and how each control step is re-run forward to rebuild the
+// states inside it. This function only converts between the batched arrays
+// and the per-environment form. Likewise step_batch and rollout_batch call
+// rollout_system, so substeps are composed in exactly one place.
 RolloutGradientBatch adjoint_batch(const std::vector<Scene>& scenes, const TrajectoryBatch& trajectory, const ControlBatch& controls, std::size_t substeps, const TrajectoryBatch& dl_dZ, const ControlBatch& dl_dU);
 
 }  // namespace grip

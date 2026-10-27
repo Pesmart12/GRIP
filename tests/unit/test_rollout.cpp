@@ -26,7 +26,7 @@ TEST(RolloutSystem, RecordsOneMoreStateThanThereAreControls) {
   const std::size_t horizon = 7;
   const std::vector<std::vector<Eigen::Vector3d>> controls(horizon, std::vector<Eigen::Vector3d>(2, Eigen::Vector3d::Zero()));
 
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, HalfPlane{}, PenaltyParams{}, controls, 0.01);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, HalfPlane{}, PenaltyParams{}, controls, 1, 0.01);
 
   ASSERT_EQ(trajectory.size(), horizon + 1);
   for (const std::vector<RigidBodyState>& states : trajectory) {
@@ -53,7 +53,7 @@ TEST(RolloutSystem, MatchesSteppingByHand) {
     controls.push_back({Eigen::Vector3d(0.1 * t, -0.2, 0.05)});
   }
 
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, dt);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, ground, penalty, controls, 1, dt);
 
   std::vector<RigidBodyState> by_hand = initial;
   for (std::size_t t = 0; t < controls.size(); ++t) {
@@ -68,7 +68,7 @@ TEST(RolloutSystem, EmptyControlSequenceReturnsOnlyTheInitialState) {
   const std::vector<RigidBodyParams> params(1);
   const std::vector<BodyShape> shapes(1);
 
-  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, HalfPlane{}, PenaltyParams{}, {}, 0.01);
+  const std::vector<std::vector<RigidBodyState>> trajectory = rollout_system(initial, params, shapes, HalfPlane{}, PenaltyParams{}, {}, 1, 0.01);
 
   EXPECT_EQ(trajectory.size(), 1u);
 }
