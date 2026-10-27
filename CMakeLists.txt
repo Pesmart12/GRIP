@@ -25,6 +25,12 @@ FetchContent_MakeAvailable(eigen)
 
 enable_testing()
 
+# The batched API runs environments in parallel when the compiler provides
+# OpenMP, and serially otherwise -- the result is bit-identical either way,
+# since each environment is computed by exactly one thread. Thread count is
+# OMP_NUM_THREADS, all cores by default.
+option(GRIP_USE_OPENMP "Parallelize the batched API over environments with OpenMP" ON)
+
 add_subdirectory(src)
 
 # Both default ON, and both go OFF for a wheel build. The tests matter most:

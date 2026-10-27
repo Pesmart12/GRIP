@@ -205,10 +205,60 @@ of them reach back into 1.0:
   invariant gets narrowed — consciously, and written down here when it
   happens.
 
-### The benchmark, now overdue
+**The speedup path, in order** (recorded 2026-10-07). Each step is worth
+more, or cheaper, than the one after it:
 
-`benchmarks/` is empty, and four performance questions have accumulated
-with nothing to answer them:
+1. **2.0's larger timestep.** Penalty needs `dt = 5e-4`; an NCP solve runs
+   at `1e-2` — 20× fewer steps for the same simulated time. Likely the
+   biggest single win, and it is already next.
+2. **A CPU thread pool over environments — done, 2026-10-09, with
+   OpenMP.** One `omp parallel for` over environments in each of
+   `step_batch`, `rollout_batch` and `adjoint_batch`; `OMP_NUM_THREADS`
+   sets the count. Each environment is computed by one thread, so results
+   are bit-identical for any thread count, which
+   `ResultsAreBitIdenticalForAnyThreadCount` asserts. Measured on the
+   i7-14700F (Linux, GCC, 28 threads) against one thread, on
+   slope-control's scenes at 20 substeps: `rollout_batch` 11× at 64
+   environments and 13× at 1024; `step_batch` 4.7× and 9.8×. Taken before
+   the profiling step below — the motivating workload was forward-only
+   rollout generation for a world model, where the physics is the whole
+   cost. Each thread still allocates per step; step 3 is what to measure
+   if scaling falls off.
+3. **An allocation-free core.** Today every step allocates —
+   `std::vector` in detection, dynamic `MatrixXd` in the system
+   Jacobians — and a CUDA kernel cannot. Fixed-size Eigen types and
+   buffers allocated once. This is also the CPU performance debt listed
+   under the benchmark, so it pays before any GPU exists, and it is where
+   most of the GPU work actually is.
+4. **A CUDA kernel, one thread per environment**, calling the same physics
+   functions compiled `__host__ __device__`. Each environment runs its
+   steps serially in its own thread, so nothing is shared, no atomics are
+   needed, and bit-for-bit determinism survives — which is how this path
+   sidesteps the tension above rather than narrowing the invariant.
+
+**CUDA C++ over Warp or JAX, decided 2026-10-07.** Not because of
+gradients — Warp's and JAX's autodiff are exact, and Warp can host
+hand-derived Jacobians too. Because porting to either means a second
+implementation of the physics in Python, which breaks the one-physics-path
+rule, whereas `__host__ __device__` keeps one implementation and every
+finite-difference-validated derivative unchanged. JAX is additionally a
+poor fit for branchy, variable-size contact geometry. Revisit if GRIP ever
+becomes Python-first.
+
+**A GPU only pays at thousands of environments.** At slope-control's 64 it
+would be mostly idle; step 2 covers that scale. And once physics gets
+faster, Amdahl applies: the per-control-step Python round trip in a
+closed-loop gradient, and the networks themselves, become the bottleneck.
+**Profile a consumer's training iteration before building steps 2–4**, so
+the split between physics, round trips and learning is measured rather
+than assumed.
+
+### The benchmark, and what it has not answered yet
+
+`benchmarks/baseline.cpp` exists and has a recorded run
+(`benchmarks/README.md`); it settled the Python-boundary question that
+shaped step 10. It deliberately does not profile inside a step, so four
+performance questions are still open:
 
 - detection allocating several vectors per call
 - `∂F/∂Q` dense when the contact graph is sparse
@@ -218,8 +268,9 @@ with nothing to answer them:
   per pair, each recomputing `ComputePairGeometry` from scratch, with the
   last two rebuilding jets the middle two just built
 
-Each was deferred with "when a benchmark says it matters." Several
-decisions now wait on the answer, so it has stopped being optional.
+Each was deferred with "when a benchmark says it matters." Most live in
+code 2.0 replaces, which is why the baseline left them alone; they come
+back as step 3 of the speedup path above.
 
 ## Note on joints: deferred into 2.0's solve
 
@@ -355,8 +406,13 @@ Settled unless explicitly reopened:
   scene construction data-driven, and don't require a caller to
   understand the integrator's internals to run a rollout.
 
-New dependencies beyond Eigen, GoogleTest and pybind11 need discussion
-first.
+New dependencies beyond Eigen, GoogleTest, pybind11 and OpenMP need
+discussion first. **OpenMP** was approved on 2026-10-09 for the batched
+API's loop over environments only. It is a compiler-provided runtime, it
+is optional (`GRIP_USE_OPENMP`, on by default; without it the loop is
+serial and the results identical), and `EIGEN_DONT_PARALLELIZE` keeps
+Eigen from parallelizing on its own once the flag is on. MSVC's `/openmp`
+is OpenMP 2.0, which is why the loop index is signed.
 
 **pybind11 was reconsidered against nanobind at step 10 and kept.** The
 baseline benchmark had just made call overhead a live concern, and

@@ -6,6 +6,20 @@
 
 #include "gradient/rollout.hpp"
 
+// The batched loops run one environment per iteration under OpenMP when it
+// is available. Each iteration reads only shared const inputs and writes only
+// its own environment's slice of the outputs, all of which are allocated
+// before the loop, so there is nothing to synchronize -- and since each
+// environment is computed start to finish by one thread running the same
+// serial code, the result is bit-identical for any thread count. Dynamic
+// scheduling because environments differ in cost with their contact count.
+// The index is signed because MSVC's OpenMP 2.0 rejects unsigned ones.
+#if defined(_OPENMP)
+#define GRIP_PARALLEL_FOR_ENVIRONMENTS _Pragma("omp parallel for schedule(dynamic, 1)")
+#else
+#define GRIP_PARALLEL_FOR_ENVIRONMENTS
+#endif
+
 namespace grip {
 namespace {
 
@@ -54,7 +68,10 @@ void step_batch(const std::vector<Scene>& scenes, StateBatch& state, const Contr
 
   // One control step is a one-step rollout, so substeps are composed in
   // exactly one place: rollout_system.
-  for (std::size_t environment = 0; environment < state.environments; ++environment) {
+  const auto environment_count = static_cast<std::ptrdiff_t>(state.environments);
+  GRIP_PARALLEL_FOR_ENVIRONMENTS
+  for (std::ptrdiff_t index = 0; index < environment_count; ++index) {
+    const auto environment = static_cast<std::size_t>(index);
     const Scene& scene = scenes[environment];
     const std::vector<std::vector<RigidBodyState>> stepped = rollout_system(read_environment_state(state, environment), scene.params, scene.shapes, scene.plane, scene.penalty, ReadEnvironmentControls(controls, environment), substeps, scene.dt, scene.gravity);
     write_environment_state(state, environment, stepped.back());
@@ -69,7 +86,10 @@ void rollout_batch(const std::vector<Scene>& scenes, const StateBatch& initial, 
 
   trajectory = make_trajectory_batch(controls.steps, initial.environments, initial.bodies);
 
-  for (std::size_t environment = 0; environment < initial.environments; ++environment) {
+  const auto environment_count = static_cast<std::ptrdiff_t>(initial.environments);
+  GRIP_PARALLEL_FOR_ENVIRONMENTS
+  for (std::ptrdiff_t index = 0; index < environment_count; ++index) {
+    const auto environment = static_cast<std::size_t>(index);
     const Scene& scene = scenes[environment];
     const std::vector<std::vector<RigidBodyState>> states = rollout_system(read_environment_state(initial, environment), scene.params, scene.shapes, scene.plane, scene.penalty, ReadEnvironmentControls(controls, environment), substeps, scene.dt, scene.gravity);
     for (std::size_t step = 0; step <= controls.steps; ++step) {
@@ -85,9 +105,8 @@ RolloutGradientBatch adjoint_batch(const std::vector<Scene>& scenes, const Traje
   const std::size_t bodies = trajectory.bodies;
   const std::size_t horizon = trajectory.steps;
 
-  if (scenes.size() != environments) {
-    throw std::invalid_argument("scene count " + std::to_string(scenes.size()) + " does not match trajectory environment count " + std::to_string(environments));
-  }
+  validate_scenes(scenes, environments, bodies);
+  RequireTrajectoryShape(trajectory, environments, bodies, horizon, "trajectory");
   RequireControlShape(controls, environments, bodies, horizon, "controls");
   RequireControlShape(dl_dU, environments, bodies, horizon, "dl_dU");
   RequireTrajectoryShape(dl_dZ, environments, bodies, horizon, "dl_dZ");
@@ -98,7 +117,10 @@ RolloutGradientBatch adjoint_batch(const std::vector<Scene>& scenes, const Traje
 
   // The recursion itself is adjoint_system's -- this only converts each
   // environment's slice of the batch into the form it reads and back.
-  for (std::size_t environment = 0; environment < environments; ++environment) {
+  const auto environment_count = static_cast<std::ptrdiff_t>(environments);
+  GRIP_PARALLEL_FOR_ENVIRONMENTS
+  for (std::ptrdiff_t index = 0; index < environment_count; ++index) {
+    const auto environment = static_cast<std::size_t>(index);
     const Scene& scene = scenes[environment];
 
     std::vector<std::vector<RigidBodyState>> states(horizon + 1);

@@ -101,9 +101,19 @@ py::array_t<double> ReleaseToNumpy(Batch&& batch, std::vector<py::ssize_t> shape
 }
 
 
+// Each entry point converts its numpy inputs, then releases the GIL for the
+// physics alone. Nothing between release and reacquire touches a Python
+// object -- the scenes were already converted by the time the function was
+// entered -- so another Python thread can run meanwhile, writing a previous
+// batch to disk, say. The physics itself parallelizes under OpenMP and needs
+// no GIL either way. An exception thrown inside reacquires it on unwind.
 py::array_t<double> StepBatch(const std::vector<Scene>& scenes, const InputArray& state, const InputArray& controls, std::size_t substeps) {
   StateBatch batch = ToStateBatch(state, "state");
-  grip::step_batch(scenes, batch, ToControlBatch(controls, "controls"), substeps);
+  const ControlBatch control_batch = ToControlBatch(controls, "controls");
+  {
+    py::gil_scoped_release release;
+    grip::step_batch(scenes, batch, control_batch, substeps);
+  }
 
   const auto environments = static_cast<py::ssize_t>(batch.environments);
   const auto bodies = static_cast<py::ssize_t>(batch.bodies);
@@ -112,8 +122,13 @@ py::array_t<double> StepBatch(const std::vector<Scene>& scenes, const InputArray
 
 
 py::array_t<double> RolloutBatch(const std::vector<Scene>& scenes, const InputArray& initial, const InputArray& controls, std::size_t substeps) {
+  const StateBatch initial_batch = ToStateBatch(initial, "initial");
+  const ControlBatch control_batch = ToControlBatch(controls, "controls");
   TrajectoryBatch trajectory;
-  grip::rollout_batch(scenes, ToStateBatch(initial, "initial"), ToControlBatch(controls, "controls"), substeps, trajectory);
+  {
+    py::gil_scoped_release release;
+    grip::rollout_batch(scenes, initial_batch, control_batch, substeps, trajectory);
+  }
 
   const auto steps = static_cast<py::ssize_t>(trajectory.steps);
   const auto environments = static_cast<py::ssize_t>(trajectory.environments);
@@ -123,7 +138,15 @@ py::array_t<double> RolloutBatch(const std::vector<Scene>& scenes, const InputAr
 
 
 py::tuple AdjointBatch(const std::vector<Scene>& scenes, const InputArray& trajectory, const InputArray& controls, std::size_t substeps, const InputArray& dl_dZ, const InputArray& dl_dU) {
-  RolloutGradientBatch gradients = grip::adjoint_batch(scenes, ToTrajectoryBatch(trajectory, "trajectory"), ToControlBatch(controls, "controls"), substeps, ToTrajectoryBatch(dl_dZ, "dl_dZ"), ToControlBatch(dl_dU, "dl_dU"));
+  const TrajectoryBatch trajectory_batch = ToTrajectoryBatch(trajectory, "trajectory");
+  const ControlBatch control_batch = ToControlBatch(controls, "controls");
+  const TrajectoryBatch state_seeds = ToTrajectoryBatch(dl_dZ, "dl_dZ");
+  const ControlBatch control_seeds = ToControlBatch(dl_dU, "dl_dU");
+  RolloutGradientBatch gradients;
+  {
+    py::gil_scoped_release release;
+    gradients = grip::adjoint_batch(scenes, trajectory_batch, control_batch, substeps, state_seeds, control_seeds);
+  }
 
   const auto steps = static_cast<py::ssize_t>(gradients.dobjective_dU.steps);
   const auto environments = static_cast<py::ssize_t>(gradients.dobjective_dZ0.environments);

@@ -7,6 +7,10 @@
 
 #include <gtest/gtest.h>
 
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
+
 #include "api/scene.hpp"
 #include "api/simulate.hpp"
 #include "core/rigid_body.hpp"
@@ -291,6 +295,69 @@ TEST(BatchedApi, RejectsMalformedShapes) {
   const TrajectoryBatch good_seed = make_trajectory_batch(3, 2, single.size());
   EXPECT_THROW(adjoint_batch(scenes, trajectory, good, 2, make_trajectory_batch(2, 2, single.size()), good), std::invalid_argument);
   EXPECT_THROW(adjoint_batch(scenes, trajectory, good, 2, good_seed, make_control_batch(2, 2, single.size())), std::invalid_argument);
+  EXPECT_THROW(adjoint_batch(std::vector<Scene>(2, MakeScene(single.size() + 1)), trajectory, good, 2, good_seed, good), std::invalid_argument);
+}
+
+// The batched loops run environments in parallel under OpenMP. Each one is
+// computed start to finish by a single thread, so the answer must not depend
+// on how many threads there are -- not to a tolerance, bit for bit. Sixteen
+// environments in sustained pair contact, each on its own slope so no two are
+// alike, through step, rollout and adjoint with substeps.
+TEST(BatchedApi, ResultsAreBitIdenticalForAnyThreadCount) {
+#if defined(_OPENMP)
+  constexpr std::size_t kEnvironments = 16;
+  constexpr std::size_t kSteps = 6;
+  constexpr std::size_t kSubsteps = 5;
+
+  std::vector<Scene> scenes;
+  std::vector<std::vector<RigidBodyState>> starts;
+  for (std::size_t e = 0; e < kEnvironments; ++e) {
+    Scene scene = MakeScene(2);
+    const double slope = 0.02 * static_cast<double>(e);
+    scene.plane.normal = Eigen::Vector2d(-std::sin(slope), std::cos(slope));
+    scenes.push_back(scene);
+    starts.push_back(ContactingStates());
+  }
+  const StateBatch initial = BatchOf(starts);
+  const ControlBatch controls = VaryingControls(kSteps, kEnvironments, 2);
+  const ControlBatch first_control = VaryingControls(1, kEnvironments, 2);
+
+  TrajectoryBatch state_seeds = make_trajectory_batch(kSteps, kEnvironments, 2);
+  for (std::size_t i = 0; i < state_seeds.values.size(); ++i) {
+    state_seeds.values[i] = std::sin(0.37 * static_cast<double>(i));
+  }
+  ControlBatch control_seeds = make_control_batch(kSteps, kEnvironments, 2);
+  for (std::size_t i = 0; i < control_seeds.values.size(); ++i) {
+    control_seeds.values[i] = std::cos(0.53 * static_cast<double>(i));
+  }
+
+  struct Results {
+    StateBatch stepped;
+    TrajectoryBatch trajectory;
+    RolloutGradientBatch gradients;
+  };
+  const auto run = [&](int threads) {
+    omp_set_num_threads(threads);
+    Results results;
+    results.stepped = initial;
+    step_batch(scenes, results.stepped, first_control, kSubsteps);
+    rollout_batch(scenes, initial, controls, kSubsteps, results.trajectory);
+    results.gradients = adjoint_batch(scenes, results.trajectory, controls, kSubsteps, state_seeds, control_seeds);
+    return results;
+  };
+
+  const int previous = omp_get_max_threads();
+  const Results serial = run(1);
+  const Results parallel = run(std::max(4, previous));
+  omp_set_num_threads(previous);
+
+  EXPECT_EQ(serial.stepped.values, parallel.stepped.values);
+  EXPECT_EQ(serial.trajectory.values, parallel.trajectory.values);
+  EXPECT_EQ(serial.gradients.dobjective_dZ0.values, parallel.gradients.dobjective_dZ0.values);
+  EXPECT_EQ(serial.gradients.dobjective_dU.values, parallel.gradients.dobjective_dU.values);
+#else
+  GTEST_SKIP() << "built without OpenMP";
+#endif
 }
 
 }  // namespace

@@ -150,6 +150,20 @@ which is precisely what 2.0 buys back.
 
 Full method and caveats in [`benchmarks/README.md`](benchmarks/README.md).
 
+**The batched API runs environments in parallel** with OpenMP, one
+environment per thread, using every core by default — set
+`OMP_NUM_THREADS` to limit it. Results are bit-identical for any thread
+count. On the same i7-14700F (Linux, GCC, 28 threads), against one thread,
+at 20 substeps per control step:
+
+| call | 64 environments | 1024 environments |
+|---|---|---|
+| `rollout_batch`, 32 control steps | 35 ms → 3.1 ms (11×) | 569 ms → 42 ms (13×) |
+| `step_batch`, one control step | 1.13 ms → 0.24 ms (4.7×) | 17.9 ms → 1.8 ms (9.8×) |
+
+The physics releases the GIL, so other Python threads keep running during
+a call.
+
 ## Building
 
 To work on GRIP itself rather than just use it. Needs a C++20 compiler
@@ -168,8 +182,9 @@ ctest --test-dir build
 | `GRIP_BUILD_BENCHMARKS` | ON | the baseline throughput benchmark |
 | `GRIP_BUILD_BINDINGS` | ON | the Python module; fetches pybind11 |
 | `GRIP_BUILD_DEMOS` | ON | the raylib demo; fetches raylib |
+| `GRIP_USE_OPENMP` | ON | parallel environments in the batched API, when the compiler has OpenMP |
 
-All four go OFF for a wheel build. Add `-DPython_EXECUTABLE=<path>` if
+The first four go OFF for a wheel build; OpenMP stays on. Add `-DPython_EXECUTABLE=<path>` if
 Python is not on `PATH` — `PYBIND11_FINDPYTHON` is on, so that variable
 is honoured rather than quietly ignored on a machine with more than one
 interpreter.

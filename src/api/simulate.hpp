@@ -21,13 +21,13 @@ namespace grip {
 //                 1 us, so crossing per integration step would spend a
 //                 quarter to three quarters of the runtime in the binding.
 //
-//   environments  independent scenes advanced together. Serial here, and
-//                 deliberately so -- what matters now is that the shape is
-//                 right, because environments never interact and so a
-//                 parallel backend can replace the loop body without
-//                 touching anything above it. Determinism survives that for
-//                 the same reason: there is no cross-environment
-//                 accumulation to reorder.
+//   environments  independent scenes advanced together, in parallel under
+//                 OpenMP when the build has it (GRIP_USE_OPENMP, on by
+//                 default; OMP_NUM_THREADS sets the thread count). Each
+//                 environment is computed start to finish by one thread, so
+//                 there is no cross-environment accumulation to reorder and
+//                 the result is bit-identical for any thread count, serial
+//                 included.
 //
 // No new physics. Every one of these is a loop over step_system and
 // step_system_jacobian, which remain the single implementation the rollout

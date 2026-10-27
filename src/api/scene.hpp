@@ -233,12 +233,13 @@ inline void write_trajectory_state(TrajectoryBatch& batch, std::size_t step, std
 // rather than an error. Validation runs once per API call, not per integration
 // step, so this is not the hot loop the rule is about. pybind11 translates
 // std::invalid_argument into a Python exception with no adapter.
-inline void validate_scene_batch(const std::vector<Scene>& scenes, const StateBatch& batch) {
-  if (scenes.size() != batch.environments) {
-    throw std::invalid_argument("scene count " + std::to_string(scenes.size()) + " does not match state batch environment count " + std::to_string(batch.environments));
-  }
-  if (batch.values.size() != batch.environments * batch.bodies * kStateValuesPerBody) {
-    throw std::invalid_argument("state batch holds " + std::to_string(batch.values.size()) + " values, expected " + std::to_string(batch.environments * batch.bodies * kStateValuesPerBody));
+//
+// It also has to happen before the batched loop starts for a second reason:
+// that loop runs under OpenMP, and an exception may not leave a parallel
+// region. Everything that can be wrong with a call is caught out here.
+inline void validate_scenes(const std::vector<Scene>& scenes, std::size_t environments, std::size_t bodies) {
+  if (scenes.size() != environments) {
+    throw std::invalid_argument("scene count " + std::to_string(scenes.size()) + " does not match batch environment count " + std::to_string(environments));
   }
   for (std::size_t environment = 0; environment < scenes.size(); ++environment) {
     const Scene& scene = scenes[environment];
@@ -246,8 +247,8 @@ inline void validate_scene_batch(const std::vector<Scene>& scenes, const StateBa
       throw std::invalid_argument("scene " + std::to_string(environment) + " has " + std::to_string(scene.params.size()) + " params and " + std::to_string(scene.shapes.size()) + " shapes");
     }
     // The rectangularity requirement, and the only cross-environment one.
-    if (scene.params.size() != batch.bodies) {
-      throw std::invalid_argument("scene " + std::to_string(environment) + " has " + std::to_string(scene.params.size()) + " bodies, batch is rectangular at " + std::to_string(batch.bodies));
+    if (scene.params.size() != bodies) {
+      throw std::invalid_argument("scene " + std::to_string(environment) + " has " + std::to_string(scene.params.size()) + " bodies, batch is rectangular at " + std::to_string(bodies));
     }
     if (scene.dt <= 0.0) {
       throw std::invalid_argument("scene " + std::to_string(environment) + " has non-positive dt");
@@ -255,5 +256,12 @@ inline void validate_scene_batch(const std::vector<Scene>& scenes, const StateBa
   }
 }
 
+
+inline void validate_scene_batch(const std::vector<Scene>& scenes, const StateBatch& batch) {
+  if (batch.values.size() != batch.environments * batch.bodies * kStateValuesPerBody) {
+    throw std::invalid_argument("state batch holds " + std::to_string(batch.values.size()) + " values, expected " + std::to_string(batch.environments * batch.bodies * kStateValuesPerBody));
+  }
+  validate_scenes(scenes, batch.environments, batch.bodies);
+}
 
 }  // namespace grip
